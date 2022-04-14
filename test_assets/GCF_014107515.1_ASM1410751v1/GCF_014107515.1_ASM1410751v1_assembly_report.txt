@@ -1,0 +1,33 @@
+# Assembly name:  ASM1410751v1
+# Organism name:  Vibrio vulnificus (g-proteobacteria)
+# Infraspecific name:  strain=Vv180806
+# Taxid:          672
+# BioSample:      SAMN12816916
+# BioProject:     PRJNA573548
+# Submitter:      Guangdong Institute of Microbiology
+# Date:           2020-08-07
+# Assembly type:  na
+# Release type:   major
+# Assembly level: Complete Genome
+# Genome representation: full
+# Assembly method: HGAP v. 4
+# Expected final version: yes
+# Genome coverage: 529.0x
+# Sequencing technology: PacBio Sequel
+# GenBank assembly accession: GCA_014107515.1
+# RefSeq assembly accession: GCF_014107515.1
+# RefSeq assembly and GenBank assemblies identical: yes
+#
+## Assembly-Units:
+## GenBank Unit Accession	RefSeq Unit Accession	Assembly-Unit name
+## GCA_014107525.1	GCF_014107525.1	Primary Assembly
+#
+# Ordered by chromosome/plasmid; the chromosomes/plasmids are followed by
+# unlocalized scaffolds.
+# Unplaced scaffolds are listed at the end.
+# RefSeq is equal or derived from GenBank object.
+#
+# Sequence-Name	Sequence-Role	Assigned-Molecule	Assigned-Molecule-Location/Type	GenBank-Accn	Relationship	RefSeq-Accn	Assembly-Unit	Sequence-Length	UCSC-style-name
+1	assembled-molecule	1	Chromosome	CP044206.1	=	NZ_CP044206.1	Primary Assembly	3400045	na
+2	assembled-molecule	2	Chromosome	CP044207.1	=	NZ_CP044207.1	Primary Assembly	1890883	na
+pVv180806	assembled-molecule	pVv180806	Plasmid	CP044208.1	=	NZ_CP044208.1	Primary Assembly	65566	na

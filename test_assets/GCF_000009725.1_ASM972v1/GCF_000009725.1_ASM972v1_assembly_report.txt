@@ -1,0 +1,31 @@
+# Assembly name:  ASM972v1
+# Organism name:  Synechocystis sp. PCC 6803 (cyanobacteria)
+# Infraspecific name:  strain=PCC 6803
+# Taxid:          1148
+# BioSample:      SAMD00061113
+# BioProject:     PRJNA60
+# Submitter:      Kazusa
+# Date:           2004-05-11
+# Assembly type:  na
+# Release type:   major
+# Assembly level: Complete Genome
+# Genome representation: full
+# GenBank assembly accession: GCA_000009725.1
+# RefSeq assembly accession: GCF_000009725.1
+# RefSeq assembly and GenBank assemblies identical: yes
+#
+## Assembly-Units:
+## GenBank Unit Accession	RefSeq Unit Accession	Assembly-Unit name
+## GCA_000009735.1	GCF_000009735.1	Primary Assembly
+#
+# Ordered by chromosome/plasmid; the chromosomes/plasmids are followed by
+# unlocalized scaffolds.
+# Unplaced scaffolds are listed at the end.
+# RefSeq is equal or derived from GenBank object.
+#
+# Sequence-Name	Sequence-Role	Assigned-Molecule	Assigned-Molecule-Location/Type	GenBank-Accn	Relationship	RefSeq-Accn	Assembly-Unit	Sequence-Length	UCSC-style-name
+ANONYMOUS	assembled-molecule	na	Chromosome	BA000022.2	=	NC_000911.1	Primary Assembly	3573470	na
+pSYSA	assembled-molecule	pSYSA	Plasmid	AP004311.1	=	NC_005230.1	Primary Assembly	103307	na
+pSYSG	assembled-molecule	pSYSG	Plasmid	AP004312.1	=	NC_005231.1	Primary Assembly	44343	na
+pSYSM	assembled-molecule	pSYSM	Plasmid	AP004310.1	=	NC_005229.1	Primary Assembly	119895	na
+pSYSX	assembled-molecule	pSYSX	Plasmid	AP006585.1	=	NC_005232.1	Primary Assembly	106004	na

@@ -1,0 +1,12 @@
+956a3ca049df42b476e68dcc47deda72  ./annotation_hashes.txt
+8d5ab7e516ca0d24a46d72bfe9ff7912  ./GCA_000152665.1_ASM15266v1_assembly_report.txt
+e76b5e04f8a16e4e72dec84e2cf5a457  ./GCA_000152665.1_ASM15266v1_assembly_stats.txt
+4f8fc9183067100dd0e2dfc098d818bc  ./GCA_000152665.1_ASM15266v1_assembly_structure/Primary_Assembly/assembled_chromosomes/AGP/chr.comp.agp.gz
+afa873ed4d955ef642add4324ea00d0d  ./GCA_000152665.1_ASM15266v1_assembly_structure/Primary_Assembly/assembled_chromosomes/chr2acc
+8826322bd1c0a6c43c011117434a49db  ./GCA_000152665.1_ASM15266v1_assembly_structure/Primary_Assembly/assembled_chromosomes/FASTA/chr.fna.gz
+bdbd17cb6d7d128b8622638be7787eec  ./GCA_000152665.1_ASM15266v1_assembly_structure/Primary_Assembly/component_localID2acc
+06ebba4094817c34c7ae3526aa332219  ./GCA_000152665.1_ASM15266v1_feature_count.txt.gz
+8826322bd1c0a6c43c011117434a49db  ./GCA_000152665.1_ASM15266v1_genomic.fna.gz
+8828b5ffe01a1f7a6d34072adfcd1379  ./GCA_000152665.1_ASM15266v1_genomic_gaps.txt.gz
+f8864fc9b62646c745a117a0caa8c13f  ./GCA_000152665.1_ASM15266v1_genomic.gbff.gz
+a8faacbb575eea88971b2071484f5256  ./GCA_000152665.1_ASM15266v1_wgsmaster.gbff.gz

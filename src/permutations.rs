@@ -71,37 +71,14 @@ pub fn full_seq_permutator(sequence: String, remapping_table: HashMap<char, Vec<
     }
 }
 
-fn build_cop_permutation_table() -> (String, HashMap<char, Vec<char>>) {
-    let operator_seq = "RNYKACANNYGTMRNY".to_string();
-    let permutation_table = {
-        let mut tmp_table: HashMap<char, Vec<char>> = HashMap::new();
-
-        let character_flags = ['R', 'N', 'Y', 'K', 'M'];
-        let substituents = [
-            vec!['A', 'G'],
-            vec!['A', 'C', 'G', 'T'],
-            vec!['C', 'T'],
-            vec!['G', 'T'],
-            vec!['A', 'C'],
-        ];
-
-        for (key, val) in character_flags.into_iter().zip(substituents) {
-            tmp_table.insert(key, val);
-        }
-        tmp_table
-    };
-
-    return(operator_seq, permutation_table)
-}
-
-
 #[cfg(test)]
 mod test {
     use super::*;
     use std::io::Read;
-    use std::path::Path;
+    use std::path::PathBuf;
     use std::fs::File;
     use std::collections::HashSet;
+    use crate::cop_operon_specific;
 
     #[test]
     fn next_site_test_1() {
@@ -232,27 +209,10 @@ mod test {
 
     #[test]
     fn full_permutator_test_2() {
-        let test_seq = "RNYKACANNYGTMRNY".to_string();
-        let permutation_table = {
-            let mut tmp_table: HashMap<char, Vec<char>> = HashMap::new();
 
-            let character_flags = ['R', 'N', 'Y', 'K', 'M'];
-            let substituents = [
-                vec!['A', 'G'],
-                vec!['A', 'C', 'G', 'T'],
-                vec!['C', 'T'],
-                vec!['G', 'T'],
-                vec!['A', 'C'],
-            ];
-
-            for (key, val) in character_flags.into_iter().zip(substituents) {
-                tmp_table.insert(key, val);
-            }
-            tmp_table
-        };
-
+        // Expected
         let expected_result = {
-            let permutation_list_path = Path::new("assets/RNYKACANNYGTMRNY_permutations.txt");
+            let permutation_list_path = PathBuf::from("test_assets/RNYKACANNYGTMRNY_permutations.txt");
             let err_msg = "ERROR: could not open file containing pre-generated list of CopY permutations!";
             let mut file = File::open(permutation_list_path).expect(err_msg);
             let mut contents = String::new();
@@ -264,6 +224,8 @@ mod test {
             set_of_permutations
         };
 
+        // Actual
+        let (test_seq, permutation_table) = cop_operon_specific::build_cop_permutation_table();
         let actual_result: HashSet<String> = full_seq_permutator(test_seq, permutation_table).into_iter().collect();
 
         assert_eq!(actual_result, expected_result);
