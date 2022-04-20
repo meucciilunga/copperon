@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::Read;
+use std::io::{self, Read, BufRead};
 use std::path::PathBuf;
 
 fn import_database_summary(summary_file_path: PathBuf) -> HashMap<String, AssemblyMetadata> {
@@ -47,7 +47,7 @@ fn import_database_summary(summary_file_path: PathBuf) -> HashMap<String, Assemb
     database_metadata_table
 }
 
-fn parse_genome_sequence(genome_name: String, genome_fasta_file: PathBuf) -> GenomeSequence {
+fn parse_genome_sequence(assembly_name: String, genome_fasta_file: PathBuf) -> GenomeSequence {
     
     // Read-in Metadata file
     let mut file = File::open(genome_fasta_file).expect("ERROR: could not open metadata summary file!");
@@ -104,10 +104,41 @@ fn parse_genome_sequence(genome_name: String, genome_fasta_file: PathBuf) -> Gen
 
     // Wrap data into a genome sequence
     GenomeSequence {
-        genome_name,
+        assembly_name,
         genomic_elements: replicon_data
     }
 }
+
+fn parse_genome_annotation(genome_annotation_file: PathBuf) -> Vec<AnnotationEntry> {
+
+    // Storage logistics
+    let mut annotation_data: Vec<AnnotationEntry> = Vec::new();
+      
+    // Read-in Metadata file
+    let file = File::open(genome_annotation_file).expect("ERROR: could not open annotation data file!");
+    let file_lines = io::BufReader::new(file).lines();
+
+    // Parse each line in the file into AnnotationEntry
+    for line in file_lines {
+
+        // Skip any line that starts with '#'
+        let parse_error = "ERROR: could not unwrap line data.";
+        if line.as_ref().expect(parse_error).chars().rev().last() == Some('#') {
+            continue;
+        }
+
+        // Parse every data entry line
+        if let Ok(data) = line {
+            let entries = data.split('\t').map(|s| s.to_string()).collect::<Vec<String>>();
+            let new_annotation = AnnotationEntry::from_split_line_vec(entries);
+            annotation_data.push(new_annotation)
+        }
+    }
+
+    annotation_data
+}
+
+
 
 #[derive(PartialEq, Debug, Clone)]
 struct AssemblyMetadata {
@@ -149,8 +180,9 @@ impl AssemblyMetadata {
     }
 }
 
+#[derive(PartialEq, Debug, Clone)]
 struct GenomeSequence {
-    genome_name: String,
+    assembly_name: String,
     genomic_elements: Vec<RepliconSequence>
 }
 
@@ -160,13 +192,56 @@ struct RepliconSequence {
     replicon_sequence: String,
 }
 
-struct GeneralAnnotationData {}
+#[derive(PartialEq, Debug, Clone)]
+struct AnnotationEntry {
+    genomic_accession: String,
+    source: String,
+    feature_type: String,
+    ord_start_index: usize,
+    ord_end_index: usize,
+    replicon_strand: String,
+    attributes: HashMap<String, String>,
+}
 
-struct CopYAnnoationData {}
+impl AnnotationEntry {
+
+    // Parse annotation entry from an input vector deriving from a split operation
+    fn from_split_line_vec(input_vec: Vec<String>) -> AnnotationEntry {
+
+        let start_index_err = "ERROR: could not parse annotation start index";
+        let end_index_err = "ERROR: could not parse annotation start index";
+
+        let mut attributes: HashMap<String, String> = HashMap::new();
+        let raw_attributes = input_vec[8].split(';');
+
+        for item in raw_attributes {
+            let new_pair = item.split('=')
+                .map(|s| s.to_string())
+                .collect::<Vec<String>>();
+
+            // Update attributes hash_table; assumes no duplicate entries
+            attributes.insert(new_pair[0].clone(), new_pair[1].clone());
+        }
+
+        AnnotationEntry {
+            genomic_accession:   input_vec[0].clone(),
+            source:             input_vec[1].clone(),
+            feature_type:       input_vec[2].clone(),
+            ord_start_index:    input_vec[3].parse::<usize>().expect(start_index_err),
+            ord_end_index:      input_vec[4].parse::<usize>().expect(end_index_err),
+            replicon_strand:    input_vec[6].clone(),
+            attributes,
+        }
+    }
+}
+
+struct BlastDerivedAnnotationData {}
 
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+    use std::fs::{self, File};
+    use std::io::Read;
     use super::*;
 
     #[test]
@@ -225,10 +300,180 @@ mod tests {
         assert_eq!(expected_answer, actual_answer)
     }
 
+    // For parsing genome sequence from preprocessed test files
+    fn parse_confirmation_genome_dir(dir_path: PathBuf) -> GenomeSequence {
+        let assembly_name = dir_path.file_name().unwrap().to_str().unwrap().to_string();
+        let paths = fs::read_dir(dir_path).expect("ERROR: could not open genomic testing file directory.");
+        let mut replicons: Vec<RepliconSequence> = Vec::new();
+
+        for path in paths {
+            let file_path = path.unwrap().path();
+            let replicon_accession = file_path.file_name().unwrap().to_str().unwrap().to_string();
+
+            let mut file = File::open(file_path).expect("ERROR: could not open replicon sequence file!");
+            let mut replicon_sequence = String::new();
+
+            file.read_to_string(&mut replicon_sequence).expect("ERROR: could not read sequence data from replicon file!");
+
+            let new_replicon = RepliconSequence {
+                replicon_accession,
+                replicon_sequence,
+            };
+
+            replicons.push(new_replicon);
+        }
+
+        GenomeSequence {
+            assembly_name,
+            genomic_elements: replicons,
+        }
+    }
+
     #[test]
-    fn parse_genome_sequence_1() {
+    fn test_parse_genome_sequence_1() {
+        let test_file = "test_assets/GCA_000152665.1_ASM15266v1/GCA_000152665.1_ASM15266v1_genomic.fna";
+        let test_file = PathBuf::from(test_file);
+        let expected_genome = parse_genome_sequence("GCA_000152665.1_ASM15266v1".to_string(), test_file);
+
+        let confirmation_dir = PathBuf::from("test_assets/preprocessed_test_genomes/GCA_000152665.1_ASM15266v1");
+        let actual_genome = parse_confirmation_genome_dir(confirmation_dir);
+
+        assert_eq!(expected_genome, actual_genome);
+    }
+
+    #[test]
+    fn test_parse_genome_sequence_2() {
         let test_file = "test_assets/GCF_000009725.1_ASM972v1/GCF_000009725.1_ASM972v1_genomic.fna";
         let test_file = PathBuf::from(test_file);
-        let genome = parse_genome_sequence("GCF_000009725.1_ASM972v1".to_string(), test_file);
+        let expected_genome = parse_genome_sequence("GCF_000009725.1_ASM972v1".to_string(), test_file);
+
+        let confirmation_dir = PathBuf::from("test_assets/preprocessed_test_genomes/GCF_000009725.1_ASM972v1");
+        let actual_genome = parse_confirmation_genome_dir(confirmation_dir);
+
+        assert_eq!(expected_genome, actual_genome);
+    }
+
+    #[test]
+    fn test_parse_genome_sequence_3() {
+        let test_file = "test_assets/GCF_014107515.1_ASM1410751v1/GCF_014107515.1_ASM1410751v1_genomic.fna";
+        let test_file = PathBuf::from(test_file);
+        let expected_genome = parse_genome_sequence("GCF_014107515.1_ASM1410751v1".to_string(), test_file);
+
+        let confirmation_dir = PathBuf::from("test_assets/preprocessed_test_genomes/GCF_014107515.1_ASM1410751v1");
+        let actual_genome = parse_confirmation_genome_dir(confirmation_dir);
+
+        assert_eq!(expected_genome, actual_genome);
+    }
+
+    #[test]
+    fn test_parse_genome_sequence_4() {
+        let test_file = "test_assets/GCF_016889785.1_ASM1688978v1/GCF_016889785.1_ASM1688978v1_genomic.fna";
+        let test_file = PathBuf::from(test_file);
+        let expected_genome = parse_genome_sequence("GCF_016889785.1_ASM1688978v1".to_string(), test_file);
+
+        let confirmation_dir = PathBuf::from("test_assets/preprocessed_test_genomes/GCF_016889785.1_ASM1688978v1");
+        let actual_genome = parse_confirmation_genome_dir(confirmation_dir);
+
+        assert_eq!(expected_genome, actual_genome);
+    }
+
+    #[test]
+    fn test_parse_genome_sequence_5() {
+        let test_file = "test_assets/GCF_016889785.1_ASM1688978v1/GCF_016889785.1_ASM1688978v1_genomic.fna";
+        let test_file = PathBuf::from(test_file);
+        let expected_genome = parse_genome_sequence("GCF_016889785.1_ASM1688978v1".to_string(), test_file);
+
+        let confirmation_dir = PathBuf::from("test_assets/preprocessed_test_genomes/GCF_000009725.1_ASM972v1");
+        let actual_genome = parse_confirmation_genome_dir(confirmation_dir);
+
+        assert_ne!(expected_genome, actual_genome);
+    }
+
+    #[test]
+    fn test_parse_genome_sequence_6() {
+        let test_file = "test_assets/GCF_000009725.1_ASM972v1/GCF_000009725.1_ASM972v1_genomic.fna";
+        let test_file = PathBuf::from(test_file);
+        let expected_genome = parse_genome_sequence("GCF_000009725.1_ASM972v1_missing_files".to_string(), test_file);
+
+        let confirmation_dir = PathBuf::from("test_assets/preprocessed_test_genomes/GCF_000009725.1_ASM972v1_missing_files");
+        let actual_genome = parse_confirmation_genome_dir(confirmation_dir);
+
+        assert_ne!(expected_genome, actual_genome);
+    }
+
+    #[test]
+    fn test_parse_annotation_1() {
+        let test_file = "test_assets/GCF_000009725.1_ASM972v1/GCF_000009725.1_ASM972v1_genomic.gff";
+        let test_file = PathBuf::from(test_file);
+        let parsed_annotation_entries = parse_genome_annotation(test_file);
+
+        // Manually defined database entries
+        let expected_entry_1 = AnnotationEntry {
+            genomic_accession: "NC_000911.1".to_string(),
+            source: "Protein Homology".to_string(),
+            feature_type: "CDS".to_string(),
+            ord_start_index: 3065617,
+            ord_end_index: 3066207,
+            replicon_strand: "-".to_string(),
+            attributes: {
+                let mut test_hashmap: HashMap<String, String> = HashMap::new();
+                let test_keys = vec!["ID", "Parent", "Dbxref", "Name", "gbkey", 
+                                 "inference", "locus_tag", "product", "protein_id", "transl_table"];
+                let test_vals = vec!["cds-WP_010873937.1", "gene-SGL_RS16115", "Genbank:WP_010873937.1",
+                                 "WP_010873937.1", "CDS", "COORDINATES: similar to AA sequence:RefSeq:WP_011153858.1",
+                                 "SGL_RS16115", "DUF305 domain-containing protein", "WP_010873937.1", "11"];
+
+                let test_keys = test_keys.iter();
+                let test_vals = test_vals.iter();
+
+                for (key, val) in test_keys.zip(test_vals) {
+                    test_hashmap.insert(key.to_string(), val.to_string());
+                }
+
+                test_hashmap
+            },
+        };
+
+        let expected_entry_2 = AnnotationEntry {
+            genomic_accession: "NC_005232.1".to_string(),
+            source: "RefSeq".to_string(),
+            feature_type: "gene".to_string(),
+            ord_start_index: 9520,
+            ord_end_index: 10167,
+            replicon_strand: "-".to_string(),
+            attributes: {
+                let mut test_hashmap: HashMap<String, String> = HashMap::new();
+
+                let test_keys = vec!["ID", "Name", "gbkey", "gene_biotype",
+                                     "locus_tag", "old_locus_tag"];
+                let test_vals = vec!["gene-SGL_RS01415", "SGL_RS01415", "Gene", "protein_coding",
+                                     "SGL_RS01415", "sll6010"];
+
+                let test_keys = test_keys.iter();
+                let test_vals = test_vals.iter();
+
+                for (key, val) in test_keys.zip(test_vals) {
+                    test_hashmap.insert(key.to_string(), val.to_string());
+                }
+
+                test_hashmap
+            },
+        };
+
+        // Pull corresponding entries taken from automatic parser
+        let mut entry_comparison: HashMap<usize, AnnotationEntry> = HashMap::new();
+        for item in parsed_annotation_entries {
+
+            let entry_1 = item.ord_start_index == 3065617 && item.genomic_accession.eq("NC_000911.1") && item.feature_type.eq("CDS");
+            let entry_2 = item.ord_start_index == 9520 && item.genomic_accession.eq("NC_005232.1") && item.feature_type.eq("gene");
+
+            if entry_1 || entry_2 {
+                entry_comparison.insert(item.ord_start_index, item);
+            }
+        }
+
+        // Compare parsed entries against manual entries
+        assert_eq!(expected_entry_1, *entry_comparison.get(&expected_entry_1.ord_start_index).unwrap());
+        assert_eq!(expected_entry_2, *entry_comparison.get(&expected_entry_2.ord_start_index).unwrap());
     }
 }
