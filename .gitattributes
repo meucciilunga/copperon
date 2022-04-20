@@ -1,2 +1,2 @@
-*.1 linguist-documentation
-*.4 linguist-documentation
+*.1 linguist-documentation=true
+*.4 linguist-documentation=true
