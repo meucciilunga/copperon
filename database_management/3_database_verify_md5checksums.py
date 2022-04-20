@@ -2,25 +2,24 @@
 # AUTHOR: Katavga
 # DATE: 8-Apr-2022
 
-# INPUTS: first cmd_line argv should be the path to a root directory
-# containing a series of subdirectories composed of GenBank/RefSeq
-# assembly directories.
+# INPUTS: first cmd_line argv should be the path to a database root 
+# directory (i.e., GenBank or Refseq) containing a set of subdirectories 
+# containing the database's corresponding assembly directories.
 
 # PURPOSE: Given a root directory containing a series of GenBank/RefSeq
-# assembly folders each containing a standard NCBI Genome-Assembly md5 
-# checksum file, pull from md5checksums.txt the path for each known 
-# md5-validated file and the value of its corresponding MD5 checksum. 
+# assembly folders, pull from md5checksums.txt the path to each previously
+# md5-validated file plus the value of its corresponding MD5 checksum. 
 # For every path pulled from the checksum file that corresponds to a 
 # valid file within that particular genome subdirectory, check the validity 
 # of the current file's MD5 checksum. Notably, not all files listed in the
 # checksum file need to be present in the directory for this script to be 
 # used; files that are listed in a md5checksums.txt but not currently available
-# in a given genome directory when the script is run will simply be ignored.
+# in a given assembly directory when the script is run will simply be ignored.
 # This allows this script to validate the MD5-values of relevant genome files
 # right after they've been pulled from the NCBI FTP servers AND after the
 # directories have been moved and reorganized in preparation for running
 # the CopY-Regulon-Search application, which generally involves another
-# move of the database files to a remote server.
+# transfer of the database files to a remote server.
 
 import hashlib, os, sys
 

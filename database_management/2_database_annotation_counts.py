@@ -7,7 +7,9 @@
 # uniqueness of specific assemblies present in each of the downloaded databases. The primary summary
 # released from this script is two-fold: (1) the total number of unique AND downloaded assemblies across
 # both databases, PLUS (2) the number of unique, downloaded, AND annotated assemblies available across
-# both databases.
+# both databases. Primary inputs are predefined by the script: the path to root_dir of (local) GenBank
+# database and the path to root_dir of (local) RefSeq database; user must define output directory of
+# summary file.
 
 import os, sys
 
@@ -27,11 +29,10 @@ def annotation_set(genomes_root_dir):
 
         genome_name = os.path.basename(genome_dir)
 
-        # Assembly is considered annotated if its directory contains these three files
+        # Assembly is considered annotated if its directory contains these two files
         needed_files = [
-            '_feature_table.txt.gz',
+            '_genomic.gff.gz',
             '_genomic.fna.gz',
-            '_assembly_report.txt',
         ]
 
         # Verify that relevant target files exist within each assembly subdirectory
@@ -42,7 +43,7 @@ def annotation_set(genomes_root_dir):
             if os.path.isfile(target):
                 count = count + 1
         
-        if count == 3:
+        if count == len(needed_files):
             annotated_assemblies.append(genome_dir)
 
     # full assembly names, including parent database prefix-tag (i.e., GCF_ for RefSeq, GCA_ for GenBank)

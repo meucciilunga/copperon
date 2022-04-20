@@ -138,7 +138,9 @@ fn parse_genome_annotation(genome_annotation_file: PathBuf) -> Vec<AnnotationEnt
     annotation_data
 }
 
-
+fn parse_annotations_from_blast_search() -> Vec<BlastDerivedAnnotation> {
+    unimplemented!()
+}
 
 #[derive(PartialEq, Debug, Clone)]
 struct AssemblyMetadata {
@@ -198,7 +200,7 @@ struct AnnotationEntry {
     source: String,
     feature_type: String,
     ord_start_index: usize,
-    ord_end_index: usize,
+    ord_stop_index: usize,
     replicon_strand: String,
     attributes: HashMap<String, String>,
 }
@@ -224,18 +226,38 @@ impl AnnotationEntry {
         }
 
         AnnotationEntry {
-            genomic_accession:   input_vec[0].clone(),
+            genomic_accession:  input_vec[0].clone(),
             source:             input_vec[1].clone(),
             feature_type:       input_vec[2].clone(),
             ord_start_index:    input_vec[3].parse::<usize>().expect(start_index_err),
-            ord_end_index:      input_vec[4].parse::<usize>().expect(end_index_err),
+            ord_stop_index:      input_vec[4].parse::<usize>().expect(end_index_err),
             replicon_strand:    input_vec[6].clone(),
             attributes,
         }
     }
 }
 
-struct BlastDerivedAnnotationData {}
+struct BlastDerivedAnnotation {
+    parent_query_id: String,
+    parent_subject_id: String,
+    query_seq: String,
+    query_parent: String,
+    qstart_index: usize,
+    qstop_index: usize,
+    sstart_index: usize,
+    sstop_index: usize,
+    match_length: usize,
+    percent_id: f64,
+    sframe: String,
+    evalue: usize,
+    bitscore: usize,
+}
+
+impl BlastDerivedAnnotation {
+    fn from_split_line_vec(input_vec: Vec<String>) -> BlastDerivedAnnotation {
+        unimplemented!()
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -413,7 +435,7 @@ mod tests {
             source: "Protein Homology".to_string(),
             feature_type: "CDS".to_string(),
             ord_start_index: 3065617,
-            ord_end_index: 3066207,
+            ord_stop_index: 3066207,
             replicon_strand: "-".to_string(),
             attributes: {
                 let mut test_hashmap: HashMap<String, String> = HashMap::new();
@@ -439,7 +461,7 @@ mod tests {
             source: "RefSeq".to_string(),
             feature_type: "gene".to_string(),
             ord_start_index: 9520,
-            ord_end_index: 10167,
+            ord_stop_index: 10167,
             replicon_strand: "-".to_string(),
             attributes: {
                 let mut test_hashmap: HashMap<String, String> = HashMap::new();

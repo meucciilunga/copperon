@@ -3,12 +3,12 @@
 # DATE: 11-Apr-2022
 
 desc = '''
-PURPOSE: Given a root directory containing a pair of GenBank/RefSeq
-database folders and a list of assembly names, locate every assembly
-directory in the list and copy it and 9 specific files over to a new
-root directory. The new root directory can then be used to run the
-CopY-Operon-Search program, which requires that all genome assemblies
-requiring processing have their corresponding directory placed in the
+PURPOSE: Given a super-root directory containing a pair of GenBank/RefSeq
+database root directories and a list of assembly names, locate every assembly
+directory in the list and copy it and 2 specific files over to a new
+root directory. The new root directory can then be fed into the
+CopY-Operon-Search program, which requires that ALL genome assemblies
+undergoing search-processing have their corresponding directories live in the
 same root directory.
 '''
 
@@ -60,19 +60,14 @@ def build_assembly_file_src_paths(assembly_subdir):
 
     target_file_paths = []
 
-    target_basenames_list = [
-        'annotation_hashes.txt',
-        'md5checksums.txt'
-    ]
+    # Vestigial structure; don't want to remove since it'll
+    # require a bigger refactor than just leaving it
+    target_basenames_list = []
 
     target_file_types = [
-        'assembly_report.txt',
-        'cds_from_genomic.fna.gz',
-        'feature_table.txt.gz',
+        'genomic.gff.gz',
         'genomic.fna.gz',
-        'protein.faa.gz',
-        'rna_from_genomic.fna.gz',
-        'translated_cds.faa.gz'
+        'assembly_report.txt',
     ]
 
     # Build basenames of suffixed target files
