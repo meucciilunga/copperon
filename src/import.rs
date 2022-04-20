@@ -367,12 +367,36 @@ mod tests {
     fn test_parse_genome_sequence_2() {
         let test_file = "test_assets/GCF_000009725.1_ASM972v1/GCF_000009725.1_ASM972v1_genomic.fna";
         let test_file = PathBuf::from(test_file);
-        let expected_genome = parse_genome_sequence("GCF_000009725.1_ASM972v1".to_string(), test_file);
+        let test_genome = parse_genome_sequence("GCF_000009725.1_ASM972v1".to_string(), test_file);
 
         let confirmation_dir = PathBuf::from("test_assets/preprocessed_test_genomes/GCF_000009725.1_ASM972v1");
         let actual_genome = parse_confirmation_genome_dir(confirmation_dir);
 
-        assert_eq!(expected_genome, actual_genome);
+        let mut test_replicons: HashMap<String, RepliconSequence> = HashMap::new();
+        let mut actual_replicons: HashMap<String, RepliconSequence> = HashMap::new();
+
+        for item in test_genome.genomic_elements.into_iter() {
+            test_replicons.insert(item.replicon_accession.clone(), item);
+        }
+
+        for item in actual_genome.genomic_elements.into_iter() {
+            actual_replicons.insert(item.replicon_accession.clone(), item);
+        }
+
+        // This test is a little weird; basically, the program passes the test on manual review, 
+        // but fails it when undergoing the automatic review in cargo; the reason for the 
+        // auto-fail is that the order of the replicons in the test_genome vector differ slightly
+        // from the order of the replicons in the actual_genome vector; 
+        // this is due in part to differences in how they're imported: importing the actual_genome
+        // via the file system puts the replicons in alpha-numerical order; importing via
+        // the fasta uses the same order for the replicons as is listed in the fasta file. 
+        // These may not be the same lol. To get around this for this test, and so I don't
+        // have to butcher the rest of the codebase for such a minor problem, basically turn the 
+        // replicon vector into a accession -> replicon struct hash_table, then run the comparison 
+        // against the hash_table and against the assembly names seperately :) the result is the
+        // same: we check that parsing a genome via the fasta function gives the proper result 
+        assert_eq!(test_genome.assembly_name, actual_genome.assembly_name);
+        assert_eq!(test_replicons, actual_replicons);
     }
 
     #[test]
