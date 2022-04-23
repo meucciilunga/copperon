@@ -212,7 +212,7 @@ mod test {
 
         // Expected
         let expected_result = {
-            let permutation_list_path = PathBuf::from("test_assets/RNYKACANNYGTMRNY_permutations.txt");
+            let permutation_list_path = PathBuf::from("tests/test_assets/RNYKACANNYGTMRNY_permutations.txt");
             let err_msg = "ERROR: could not open file containing pre-generated list of CopY permutations!";
             let mut file = File::open(permutation_list_path).expect(err_msg);
             let mut contents = String::new();

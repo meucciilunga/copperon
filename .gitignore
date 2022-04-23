@@ -1,5 +1,5 @@
 /target
-/assets
+/local_assets
 /database/data_assets
 /database/DEPRECATED_3_database_verify_genomes_completeness.py
 /database/DEPRECATED_5_database_assembly_components.py
