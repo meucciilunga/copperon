@@ -122,7 +122,7 @@ fn parse_genome_annotation(genome_annotation_file: PathBuf) -> Vec<AnnotationEnt
     for line in file_lines {
 
         // Skip any line that starts with '#'
-        let parse_error = "ERROR: could not unwrap line data.";
+        let parse_error = "ERROR: could not unwrap line data. (GENOME PARSER)";
         if line.as_ref().expect(parse_error).chars().rev().last() == Some('#') {
             continue;
         }
@@ -138,8 +138,33 @@ fn parse_genome_annotation(genome_annotation_file: PathBuf) -> Vec<AnnotationEnt
     annotation_data
 }
 
-fn parse_annotations_from_blast_search() -> Vec<BlastDerivedAnnotation> {
-    unimplemented!()
+fn parse_annotations_from_blast_results(blast_result_file: PathBuf) -> Vec<BlastDerivedAnnotation> {
+    
+    // Storage logistics
+    let mut blast_annotation_data: Vec<BlastDerivedAnnotation> = Vec::new();
+    
+    // Read-in Metadata file
+    let file = File::open(blast_result_file).expect("ERROR: could not open BLAST results file!");
+    let file_lines = io::BufReader::new(file).lines();
+
+    // Parse each line in the file into AnnotationEntry
+    for line in file_lines {
+
+        // Skip any line that starts with '#'
+        let parse_error = "ERROR: could not unwrap line data. (BLAST PARSER)";
+        if line.as_ref().expect(parse_error).chars().rev().last() == Some('#') {
+            continue;
+        }
+
+        // Parse every data entry line
+        if let Ok(data) = line {
+            let entries = data.split('\t').map(|s| s.to_string()).collect::<Vec<String>>();
+            let new_blast_annotation = BlastDerivedAnnotation::from_split_line_vec(entries);
+            blast_annotation_data.push(new_blast_annotation)
+        }
+    }
+
+    blast_annotation_data
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -237,25 +262,41 @@ impl AnnotationEntry {
     }
 }
 
+#[derive(PartialEq, Debug)]
 struct BlastDerivedAnnotation {
-    parent_query_id: String,
-    parent_subject_id: String,
-    query_seq: String,
-    query_parent: String,
-    qstart_index: usize,
-    qstop_index: usize,
-    sstart_index: usize,
-    sstop_index: usize,
+    sseqid: String,
+    sstart: usize,
+    send: usize,
     match_length: usize,
-    percent_id: f64,
-    sframe: String,
-    evalue: usize,
-    bitscore: usize,
+    sframe: i32,
+    pident: f64,
+    evalue: f64,
+    qseqid: String,
+    qstart: usize,
+    qend: usize,
 }
 
 impl BlastDerivedAnnotation {
     fn from_split_line_vec(input_vec: Vec<String>) -> BlastDerivedAnnotation {
-        unimplemented!()
+        let start_index_err = "ERROR: could not parse BLAST annotation start index";
+        let end_index_err = "ERROR: could not parse BLAST annotation start index";
+        let length_err = "ERROR: could not parse BLAST annotation 'match length' (column 4)";
+        let reading_frame_err = "ERROR: could not parse BLAST annotation 'reading frame' (column 5)";
+        let pident_err = "ERROR: could not parse BLAST annotation 'pident' (column 6)";
+        let eval_err = "ERROR: could not parse BLAST annotation 'evalue' (column 7)";
+
+        BlastDerivedAnnotation {
+            sseqid:         input_vec[0].clone(),
+            sstart:         input_vec[1].parse::<usize>().expect(start_index_err),
+            send:           input_vec[2].parse::<usize>().expect(end_index_err),
+            match_length:   input_vec[3].parse::<usize>().expect(length_err),
+            sframe:         input_vec[4].parse::<i32>().expect(reading_frame_err),
+            pident:         input_vec[5].parse::<f64>().expect(pident_err),
+            evalue:         input_vec[6].parse::<f64>().expect(eval_err),
+            qseqid:         input_vec[7].clone(),
+            qstart:         input_vec[8].parse::<usize>().expect(start_index_err),
+            qend:           input_vec[9].parse::<usize>().expect(end_index_err),
+        }
     }
 }
 
@@ -521,5 +562,80 @@ mod tests {
         // Compare parsed entries against manual entries
         assert_eq!(expected_entry_1, *entry_comparison.get(&expected_entry_1.ord_start_index).unwrap());
         assert_eq!(expected_entry_2, *entry_comparison.get(&expected_entry_2.ord_start_index).unwrap());
+    }
+
+    #[test]
+    fn test_parse_blast_1() {
+        let test_file = "blast/results/CopZ-TcrZ_blast_result.txt";
+        let test_file = PathBuf::from(test_file);
+        let parsed_blast_entries = parse_annotations_from_blast_results(test_file);
+
+        let expected_1 = BlastDerivedAnnotation {
+            sseqid: "NZ_OD940440.2".to_string(),
+            sstart: 261732,
+            send: 261932,
+            match_length: 67,
+            sframe: 3,
+            pident: 44.776,
+            evalue: 8.68e-10,
+            qseqid: "WP_002294571.1".to_string(),
+            qstart: 1,
+            qend: 67,
+        };
+
+        let expected_2 = BlastDerivedAnnotation {
+            sseqid: "NZ_CP064343.1".to_string(),
+            sstart: 1870968,
+            send: 1870762,
+            match_length: 69,
+            sframe: -3,
+            pident: 66.667,
+            evalue: 8.45e-15,
+            qseqid: "WP_010718490.1".to_string(),
+            qstart: 1,
+            qend: 69,
+        };
+
+        
+        assert_eq!(parsed_blast_entries[637], expected_1);
+        assert_eq!(parsed_blast_entries[158], expected_2);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_parse_blast_2() {
+        let test_file = "blast/results/CopZ-TcrZ_blast_result.txt";
+        let test_file = PathBuf::from(test_file);
+        let parsed_blast_entries = parse_annotations_from_blast_results(test_file);
+
+        let expected_1 = BlastDerivedAnnotation {
+            sseqid: "NZ_OD940440.2".to_string(),
+            sstart: 261732,
+            send: 261932,
+            match_length: 67,
+            sframe: 3,
+            pident: 44.776,
+            evalue: 8.68e-10,
+            qseqid: "WP_002294571.1".to_string(),
+            qstart: 1,
+            qend: 67,
+        };
+
+        let expected_2 = BlastDerivedAnnotation {
+            sseqid: "NZ_CP064343.1".to_string(),
+            sstart: 1870968,
+            send: 1870762,
+            match_length: 69,
+            sframe: -3,
+            pident: 66.667,
+            evalue: 8.45e-15,
+            qseqid: "WP_010718490.1".to_string(),
+            qstart: 1,
+            qend: 69,
+        };
+
+        
+        assert_eq!(parsed_blast_entries[637], expected_2);
+        assert_eq!(parsed_blast_entries[158], expected_1);
     }
 }
