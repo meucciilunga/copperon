@@ -1,6 +1,7 @@
 mod import;
 mod multithreader;
 mod permutations;
+mod genome;
 
 pub mod cop_operon_specific {
     use std::collections::HashMap;

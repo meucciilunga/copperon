@@ -4,7 +4,13 @@ use std::fs::File;
 use std::io::{self, Read, BufRead};
 use std::path::PathBuf;
 
-fn import_database_summary(summary_file_path: PathBuf) -> HashMap<String, AssemblyMetadata> {
+#[derive(PartialEq, Debug, Clone)]
+pub enum ProtoRepliconType {
+    Chromosome,
+    Plasmid,
+}
+
+pub fn import_database_summary(summary_file_path: PathBuf) -> HashMap<String, AssemblyMetadata> {
 
     // Storage logistics
     let mut database_metadata_table: HashMap<String, AssemblyMetadata> = HashMap::new(); 
@@ -47,32 +53,53 @@ fn import_database_summary(summary_file_path: PathBuf) -> HashMap<String, Assemb
     database_metadata_table
 }
 
-fn parse_genome_sequence(assembly_name: String, genome_fasta_file: PathBuf) -> GenomeSequence {
+pub fn parse_genome_sequence(assembly_name: String, genome_fasta_file: PathBuf) -> ProtoGenome {
     
-    // Read-in Metadata file
-    let mut file = File::open(genome_fasta_file).expect("ERROR: could not open metadata summary file!");
-    let mut contents = String::new();
-    file.read_to_string(&mut contents).expect("ERROR: could not read string data from metadata summary file!");
-
-    // Parse fasta data into individual files
-    let lines_of_sequence = contents.split('\n');
+    // Read-in genome sequence file
+    let file = File::open(genome_fasta_file).expect("ERROR: could not open genome sequence file!");
+    let file_lines = io::BufReader::new(file).lines();
+    
+    // Storage Logistics
     let mut parsed_sequence: Vec<String> = vec![];
     let mut definition_line_indicies: Vec<usize> = vec![];
     let mut sequence_bounds: Vec<(usize, usize)> = vec![];
-    let mut replicon_data: Vec<RepliconSequence> = vec![];
+    let mut replicon_data: Vec<ProtoReplicon> = vec![];
 
     // Determine replicon sequence bounds by determining location of 
     // every definition line by looking for '>' character
-    for (index, line) in lines_of_sequence.enumerate() {
+    for (index, line) in file_lines.enumerate() {
 
-        // Final bound is defined by line with no characters at the end of every file
-        if line.contains('>') || line.len() == 0 {
+        // Specially target lines that start with '>'
+        let parse_error = "ERROR: could not unwrap line data. (GENOME PARSER)";
+        if line.as_ref().expect(parse_error).chars().rev().last() == Some('>') {
             definition_line_indicies.push(index);
         }
-        parsed_sequence.push(line.to_string());
+
+        if let Ok(data) = line {
+            // Only definition lines should contain this character
+            if data.contains('>') {
+                // Push definition lines as they are
+                parsed_sequence.push(data.to_string());
+            } else {
+                // Ensure lines containing sequence data 
+                // are entirely composed of uppercase chars 
+                // before adding them to the storage vector
+                parsed_sequence.push(data.to_uppercase());
+            }
+        }
+
+        // NOTE: the final step collects the lines of the FASTA file
+        // into the storage vector, while ensuring both that all FASTA sequence  
+        // data is in a capital letter format AND that case-sensitive text data
+        // in the FASTA definition lines isn't altered, since data from the
+        // definition line data needs to be used as is
     }
 
-    // Define the replicon sequence boundaries
+    // Define the final bound of FASTA file, given by the number of lines it has
+    definition_line_indicies.push(parsed_sequence.len());
+
+    // Formally define the sequence boundaries for every replicon in FASTA based on the indicies of each 
+    // defn line; NOTE: REMEMBER THAT THE END BOUND (in this implementation) IS EXCLUSIVE AND NOT INCLUSIVE
     let start_indicies = definition_line_indicies.iter();
     let end_indicies = definition_line_indicies[1..].iter();
     for (&start, &end) in start_indicies.zip(end_indicies) {
@@ -82,6 +109,7 @@ fn parse_genome_sequence(assembly_name: String, genome_fasta_file: PathBuf) -> G
 
     // Parse out individual subsequences from FASTA data via bound indicies
     for (start, end) in sequence_bounds {
+
         let replicon_sequence = (&parsed_sequence[start..end].join("")).clone();
 
         // Parse out genomic accession identifier from definition
@@ -94,22 +122,42 @@ fn parse_genome_sequence(assembly_name: String, genome_fasta_file: PathBuf) -> G
                                                          .filter(|&c| c != '>')
                                                          .collect::<String>();
 
-        let new_replicon = RepliconSequence {
+        let new_replicon = ProtoReplicon {
             replicon_accession,
             replicon_sequence,
+            proto_replicon_type: ProtoRepliconType::Plasmid,
+            // Default all new replicons to 'plasmid' type, will
+            // correct for this declaration a few lines down
         };
 
         replicon_data.push(new_replicon);
     }
 
-    // Wrap data into a genome sequence
-    GenomeSequence {
+    // Find length of the longest sequence in FASTA
+    let mut max_replicon_length = 0;
+    for replicon in replicon_data.iter() {
+        if replicon.replicon_sequence.len() > max_replicon_length {
+            max_replicon_length = replicon.replicon_sequence.len();
+        }
+    };
+
+    // Adjust replicon type based on length of longest replicon
+    for replicon in &mut replicon_data {
+        if replicon.replicon_sequence.len() == max_replicon_length {
+            replicon.proto_replicon_type = ProtoRepliconType::Chromosome;
+        } else {
+            replicon.proto_replicon_type = ProtoRepliconType::Plasmid;
+        }
+    }
+
+    // Wrap all derived data into a genome sequence struct
+    ProtoGenome {
         assembly_name,
         genomic_elements: replicon_data
     }
 }
 
-fn parse_genome_annotation(genome_annotation_file: PathBuf) -> Vec<AnnotationEntry> {
+pub fn parse_genome_annotation(genome_annotation_file: PathBuf) -> Vec<AnnotationEntry> {
 
     // Storage logistics
     let mut annotation_data: Vec<AnnotationEntry> = Vec::new();
@@ -129,7 +177,9 @@ fn parse_genome_annotation(genome_annotation_file: PathBuf) -> Vec<AnnotationEnt
 
         // Parse every data entry line
         if let Ok(data) = line {
-            let entries = data.split('\t').map(|s| s.to_string()).collect::<Vec<String>>();
+            let entries = data.split('\t')
+                              .map(|s| s.to_string())
+                              .collect::<Vec<String>>();
             let new_annotation = AnnotationEntry::from_split_line_vec(entries);
             annotation_data.push(new_annotation)
         }
@@ -138,7 +188,7 @@ fn parse_genome_annotation(genome_annotation_file: PathBuf) -> Vec<AnnotationEnt
     annotation_data
 }
 
-fn parse_annotations_from_blast_results(blast_result_file: PathBuf) -> Vec<BlastDerivedAnnotation> {
+pub fn parse_annotations_from_blast_results(blast_result_file: PathBuf) -> Vec<BlastDerivedAnnotation> {
     
     // Storage logistics
     let mut blast_annotation_data: Vec<BlastDerivedAnnotation> = Vec::new();
@@ -168,7 +218,7 @@ fn parse_annotations_from_blast_results(blast_result_file: PathBuf) -> Vec<Blast
 }
 
 #[derive(PartialEq, Debug, Clone)]
-struct AssemblyMetadata {
+pub struct AssemblyMetadata {
     assembly_accession:     String,
     biosample_accession:    String,
     ref_seq_cat:            String,
@@ -208,19 +258,20 @@ impl AssemblyMetadata {
 }
 
 #[derive(PartialEq, Debug, Clone)]
-struct GenomeSequence {
-    assembly_name: String,
-    genomic_elements: Vec<RepliconSequence>
+pub struct ProtoGenome {
+    pub assembly_name: String,
+    pub genomic_elements: Vec<ProtoReplicon>
 }
 
 #[derive(PartialEq, Debug, Clone)]
-struct RepliconSequence {
-    replicon_accession: String,
-    replicon_sequence: String,
+pub struct ProtoReplicon {
+    pub replicon_accession: String,
+    pub replicon_sequence: String,
+    pub proto_replicon_type: ProtoRepliconType,
 }
 
 #[derive(PartialEq, Debug, Clone)]
-struct AnnotationEntry {
+pub struct AnnotationEntry {
     genomic_accession: String,
     source: String,
     feature_type: String,
@@ -235,8 +286,8 @@ impl AnnotationEntry {
     // Parse annotation entry from an input vector deriving from a split operation
     fn from_split_line_vec(input_vec: Vec<String>) -> AnnotationEntry {
 
-        let start_index_err = "ERROR: could not parse annotation start index";
-        let end_index_err = "ERROR: could not parse annotation start index";
+        let start_index_err =   "ERROR: could not parse annotation start index";
+        let end_index_err =     "ERROR: could not parse annotation start index";
 
         let mut attributes: HashMap<String, String> = HashMap::new();
         let raw_attributes = input_vec[8].split(';');
@@ -255,7 +306,7 @@ impl AnnotationEntry {
             source:             input_vec[1].clone(),
             feature_type:       input_vec[2].clone(),
             ord_start_index:    input_vec[3].parse::<usize>().expect(start_index_err),
-            ord_stop_index:      input_vec[4].parse::<usize>().expect(end_index_err),
+            ord_stop_index:     input_vec[4].parse::<usize>().expect(end_index_err),
             replicon_strand:    input_vec[6].clone(),
             attributes,
         }
@@ -263,7 +314,7 @@ impl AnnotationEntry {
 }
 
 #[derive(PartialEq, Debug)]
-struct BlastDerivedAnnotation {
+pub struct BlastDerivedAnnotation {
     sseqid: String,
     sstart: usize,
     send: usize,
@@ -278,12 +329,12 @@ struct BlastDerivedAnnotation {
 
 impl BlastDerivedAnnotation {
     fn from_split_line_vec(input_vec: Vec<String>) -> BlastDerivedAnnotation {
-        let start_index_err = "ERROR: could not parse BLAST annotation start index";
-        let end_index_err = "ERROR: could not parse BLAST annotation start index";
-        let length_err = "ERROR: could not parse BLAST annotation 'match length' (column 4)";
+        let start_index_err =   "ERROR: could not parse BLAST annotation start index";
+        let end_index_err =     "ERROR: could not parse BLAST annotation start index";
+        let length_err =        "ERROR: could not parse BLAST annotation 'match length' (column 4)";
         let reading_frame_err = "ERROR: could not parse BLAST annotation 'reading frame' (column 5)";
-        let pident_err = "ERROR: could not parse BLAST annotation 'pident' (column 6)";
-        let eval_err = "ERROR: could not parse BLAST annotation 'evalue' (column 7)";
+        let pident_err =        "ERROR: could not parse BLAST annotation 'pident' (column 6)";
+        let eval_err =          "ERROR: could not parse BLAST annotation 'evalue' (column 7)";
 
         BlastDerivedAnnotation {
             sseqid:         input_vec[0].clone(),
@@ -364,10 +415,10 @@ mod tests {
     }
 
     // For parsing genome sequence from preprocessed test files
-    fn parse_confirmation_genome_dir(dir_path: PathBuf) -> GenomeSequence {
+    fn parse_confirmation_genome_dir(dir_path: PathBuf) -> ProtoGenome {
         let assembly_name = dir_path.file_name().unwrap().to_str().unwrap().to_string();
         let paths = fs::read_dir(dir_path).expect("ERROR: could not open genomic testing file directory.");
-        let mut replicons: Vec<RepliconSequence> = Vec::new();
+        let mut replicons: Vec<ProtoReplicon> = Vec::new();
 
         for path in paths {
             let file_path = path.unwrap().path();
@@ -378,15 +429,36 @@ mod tests {
 
             file.read_to_string(&mut replicon_sequence).expect("ERROR: could not read sequence data from replicon file!");
 
-            let new_replicon = RepliconSequence {
+            // temporarily set all replicon types to chromosome
+            let proto_replicon_type = ProtoRepliconType::Plasmid;
+
+            let new_replicon = ProtoReplicon {
                 replicon_accession,
                 replicon_sequence,
+                proto_replicon_type,
             };
 
             replicons.push(new_replicon);
         }
 
-        GenomeSequence {
+        // Find length of longest replicon in genome
+        let mut max_len = 0_usize;
+        for replicon in replicons.iter() {
+            if replicon.replicon_sequence.len() > max_len {
+                max_len = replicon.replicon_sequence.len()
+            }
+        }
+
+        // Adjust replicon_types based on maximum replicon length
+        for replicon in &mut replicons {
+            if replicon.replicon_sequence.len() == max_len {
+                replicon.proto_replicon_type = ProtoRepliconType::Chromosome;
+            } else {
+                replicon.proto_replicon_type = ProtoRepliconType::Plasmid;
+            }
+        }
+
+        ProtoGenome {
             assembly_name,
             genomic_elements: replicons,
         }
@@ -413,8 +485,8 @@ mod tests {
         let confirmation_dir = PathBuf::from("tests/test_assets/preprocessed_test_genomes/GCF_000009725.1_ASM972v1");
         let actual_genome = parse_confirmation_genome_dir(confirmation_dir);
 
-        let mut test_replicons: HashMap<String, RepliconSequence> = HashMap::new();
-        let mut actual_replicons: HashMap<String, RepliconSequence> = HashMap::new();
+        let mut test_replicons: HashMap<String, ProtoReplicon> = HashMap::new();
+        let mut actual_replicons: HashMap<String, ProtoReplicon> = HashMap::new();
 
         for item in test_genome.genomic_elements.into_iter() {
             test_replicons.insert(item.replicon_accession.clone(), item);
@@ -444,36 +516,38 @@ mod tests {
     fn test_parse_genome_sequence_3() {
         let test_file = "tests/test_assets/GCF_014107515.1_ASM1410751v1/GCF_014107515.1_ASM1410751v1_genomic.fna";
         let test_file = PathBuf::from(test_file);
-        let expected_genome = parse_genome_sequence("GCF_014107515.1_ASM1410751v1".to_string(), test_file);
+        let test_genome = parse_genome_sequence("GCF_014107515.1_ASM1410751v1".to_string(), test_file);
 
         let confirmation_dir = PathBuf::from("tests/test_assets/preprocessed_test_genomes/GCF_014107515.1_ASM1410751v1");
         let actual_genome = parse_confirmation_genome_dir(confirmation_dir);
 
-        assert_eq!(expected_genome, actual_genome);
+        assert_eq!(test_genome, actual_genome);
     }
 
     #[test]
     fn test_parse_genome_sequence_4() {
+        // NOTE: TEST INPUT IS ENTIRELY IN LOWERCASE CHARS, SO ALSO CHECKS IF LOWERCASE -> UPPERCASE ADJUSTMENT WORKS
+        // SINCE CONFIRMATION INPUT IS ALL UPPERCASE
         let test_file = "tests/test_assets/GCF_016889785.1_ASM1688978v1/GCF_016889785.1_ASM1688978v1_genomic.fna";
         let test_file = PathBuf::from(test_file);
-        let expected_genome = parse_genome_sequence("GCF_016889785.1_ASM1688978v1".to_string(), test_file);
+        let test_genome = parse_genome_sequence("GCF_016889785.1_ASM1688978v1".to_string(), test_file);
 
         let confirmation_dir = PathBuf::from("tests/test_assets/preprocessed_test_genomes/GCF_016889785.1_ASM1688978v1");
         let actual_genome = parse_confirmation_genome_dir(confirmation_dir);
 
-        assert_eq!(expected_genome, actual_genome);
+        assert_eq!(test_genome, actual_genome);
     }
 
     #[test]
     fn test_parse_genome_sequence_5() {
         let test_file = "tests/test_assets/GCF_016889785.1_ASM1688978v1/GCF_016889785.1_ASM1688978v1_genomic.fna";
         let test_file = PathBuf::from(test_file);
-        let expected_genome = parse_genome_sequence("GCF_016889785.1_ASM1688978v1".to_string(), test_file);
+        let test_genome = parse_genome_sequence("GCF_016889785.1_ASM1688978v1".to_string(), test_file);
 
         let confirmation_dir = PathBuf::from("tests/test_assets/preprocessed_test_genomes/GCF_000009725.1_ASM972v1");
         let actual_genome = parse_confirmation_genome_dir(confirmation_dir);
 
-        assert_ne!(expected_genome, actual_genome);
+        assert_ne!(test_genome, actual_genome);
     }
 
     #[test]
