@@ -468,12 +468,19 @@ mod tests {
     fn test_parse_genome_sequence_1() {
         let test_file = "tests/test_assets/GCA_000152665.1_ASM15266v1/GCA_000152665.1_ASM15266v1_genomic.fna";
         let test_file = PathBuf::from(test_file);
-        let expected_genome = parse_genome_sequence("GCA_000152665.1_ASM15266v1".to_string(), test_file);
+        let test_genome = parse_genome_sequence("GCA_000152665.1_ASM15266v1".to_string(), test_file);
 
         let confirmation_dir = PathBuf::from("tests/test_assets/preprocessed_test_genomes/GCA_000152665.1_ASM15266v1");
         let actual_genome = parse_confirmation_genome_dir(confirmation_dir);
 
-        assert_eq!(expected_genome, actual_genome);
+        // Validate that both methods parse to identical objects
+        assert_eq!(test_genome, actual_genome);
+        
+        // Validate that the correct number of replicons are parsed
+        assert_eq!(test_genome.genomic_elements.len(), 1);
+
+        // Validate total length of genome against known value
+        assert_eq!(test_genome.genomic_elements[0].replicon_sequence.len(), 4_109_689);
     }
 
     #[test]
@@ -510,6 +517,13 @@ mod tests {
         // same: we check that parsing a genome via the fasta function gives the proper result 
         assert_eq!(test_genome.assembly_name, actual_genome.assembly_name);
         assert_eq!(test_replicons, actual_replicons);
+
+        // Validate total length of genome against known value
+        let mut total_len = 0_usize;
+        for genomic_element in test_replicons.values() {
+            total_len += genomic_element.replicon_sequence.len()
+        }
+        assert_eq!(total_len, 3_947_019);
     }
 
     #[test]
@@ -521,7 +535,18 @@ mod tests {
         let confirmation_dir = PathBuf::from("tests/test_assets/preprocessed_test_genomes/GCF_014107515.1_ASM1410751v1");
         let actual_genome = parse_confirmation_genome_dir(confirmation_dir);
 
+        // Validate that both methods parse to identical objects
         assert_eq!(test_genome, actual_genome);
+
+        // Validate that the correct number of replicons are parsed
+        assert_eq!(test_genome.genomic_elements.len(), 3);
+
+        // Validate total length of genome against known value
+        let mut total_len = 0_usize;
+        for genomic_element in &test_genome.genomic_elements {
+            total_len += genomic_element.replicon_sequence.len()
+        }
+        assert_eq!(total_len, 5_356_494);
     }
 
     #[test]
@@ -535,7 +560,18 @@ mod tests {
         let confirmation_dir = PathBuf::from("tests/test_assets/preprocessed_test_genomes/GCF_016889785.1_ASM1688978v1");
         let actual_genome = parse_confirmation_genome_dir(confirmation_dir);
 
+        // Validate that both methods parse to identical objects
         assert_eq!(test_genome, actual_genome);
+
+        // Validate that the correct number of replicons are parsed
+        assert_eq!(test_genome.genomic_elements.len(), 1);
+
+        // Validate total length of genome against known value
+        let mut total_len = 0_usize;
+        for genomic_element in &test_genome.genomic_elements {
+            total_len += genomic_element.replicon_sequence.len()
+        }
+        assert_eq!(total_len, 2_886_678);
     }
 
     #[test]
