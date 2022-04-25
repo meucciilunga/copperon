@@ -4,12 +4,6 @@ use std::fs::File;
 use std::io::{self, Read, BufRead};
 use std::path::PathBuf;
 
-#[derive(PartialEq, Debug, Clone)]
-pub enum ProtoRepliconType {
-    Chromosome,
-    Plasmid,
-}
-
 pub fn import_database_summary(summary_file_path: PathBuf) -> HashMap<String, AssemblyMetadata> {
 
     // Storage logistics
@@ -153,7 +147,7 @@ pub fn parse_genome_sequence(assembly_name: String, genome_fasta_file: PathBuf) 
     // Wrap all derived data into a genome sequence struct
     ProtoGenome {
         assembly_name,
-        genomic_elements: replicon_data
+        proto_replicons: replicon_data
     }
 }
 
@@ -218,19 +212,25 @@ pub fn parse_annotations_from_blast_results(blast_result_file: PathBuf) -> Vec<B
 }
 
 #[derive(PartialEq, Debug, Clone)]
+pub enum ProtoRepliconType {
+    Chromosome,
+    Plasmid,
+}
+
+#[derive(PartialEq, Debug, Clone)]
 pub struct AssemblyMetadata {
-    assembly_accession:     String,
-    biosample_accession:    String,
-    ref_seq_cat:            String,
-    tax_id:                 String,
-    species_tax_id:         String,
-    organism_name:          String,
-    infraspecifc_name:      String,
-    assembly_level:         String,
-    assembly_name:          String,
-    ftp_location:           String,
-    subdir_name:            String,
-    ref_seq_status:         String,
+    pub assembly_accession:     String,
+    pub biosample_accession:    String,
+    pub ref_seq_cat:            String,
+    pub tax_id:                 String,
+    pub species_tax_id:         String,
+    pub organism_name:          String,
+    pub infraspecifc_name:      String,
+    pub assembly_level:         String,
+    pub assembly_name:          String,
+    pub ftp_location:           String,
+    pub subdir_name:            String,
+    pub ref_seq_status:         String,
 }
 
 impl AssemblyMetadata {
@@ -260,7 +260,7 @@ impl AssemblyMetadata {
 #[derive(PartialEq, Debug, Clone)]
 pub struct ProtoGenome {
     pub assembly_name: String,
-    pub genomic_elements: Vec<ProtoReplicon>
+    pub proto_replicons: Vec<ProtoReplicon>
 }
 
 #[derive(PartialEq, Debug, Clone)]
@@ -272,13 +272,13 @@ pub struct ProtoReplicon {
 
 #[derive(PartialEq, Debug, Clone)]
 pub struct AnnotationEntry {
-    genomic_accession: String,
-    source: String,
-    feature_type: String,
-    ord_start_index: usize,
-    ord_stop_index: usize,
-    replicon_strand: String,
-    attributes: HashMap<String, String>,
+    pub genomic_accession:  String,
+    pub source_database:    String,
+    pub feature_type:       String,
+    pub start_index_ord:    usize,
+    pub end_index_ord:     usize,
+    pub replicon_strand:    char,
+    pub attributes:         HashMap<String, String>,
 }
 
 impl AnnotationEntry {
@@ -287,7 +287,8 @@ impl AnnotationEntry {
     fn from_split_line_vec(input_vec: Vec<String>) -> AnnotationEntry {
 
         let start_index_err =   "ERROR: could not parse annotation start index";
-        let end_index_err =     "ERROR: could not parse annotation start index";
+        let end_index_err =     "ERROR: could not parse annotation end index";
+        let strand_err =        "ERROR: could not parse strand information";
 
         let mut attributes: HashMap<String, String> = HashMap::new();
         let raw_attributes = input_vec[8].split(';');
@@ -303,11 +304,11 @@ impl AnnotationEntry {
 
         AnnotationEntry {
             genomic_accession:  input_vec[0].clone(),
-            source:             input_vec[1].clone(),
+            source_database:    input_vec[1].clone(),
             feature_type:       input_vec[2].clone(),
-            ord_start_index:    input_vec[3].parse::<usize>().expect(start_index_err),
-            ord_stop_index:     input_vec[4].parse::<usize>().expect(end_index_err),
-            replicon_strand:    input_vec[6].clone(),
+            start_index_ord:    input_vec[3].parse::<usize>().expect(start_index_err),
+            end_index_ord:     input_vec[4].parse::<usize>().expect(end_index_err),
+            replicon_strand:    input_vec[6].parse::<char>().expect(strand_err),
             attributes,
         }
     }
@@ -315,16 +316,16 @@ impl AnnotationEntry {
 
 #[derive(PartialEq, Debug)]
 pub struct BlastDerivedAnnotation {
-    sseqid: String,
-    sstart: usize,
-    send: usize,
-    match_length: usize,
-    sframe: i32,
-    pident: f64,
-    evalue: f64,
-    qseqid: String,
-    qstart: usize,
-    qend: usize,
+    pub sseqid: String,
+    pub sstart: usize,
+    pub send: usize,
+    pub match_length: usize,
+    pub sframe: i32,
+    pub pident: f64,
+    pub evalue: f64,
+    pub qseqid: String,
+    pub qstart: usize,
+    pub qend: usize,
 }
 
 impl BlastDerivedAnnotation {
@@ -460,7 +461,7 @@ mod tests {
 
         ProtoGenome {
             assembly_name,
-            genomic_elements: replicons,
+            proto_replicons: replicons,
         }
     }
 
@@ -477,10 +478,10 @@ mod tests {
         assert_eq!(test_genome, actual_genome);
         
         // Validate that the correct number of replicons are parsed
-        assert_eq!(test_genome.genomic_elements.len(), 1);
+        assert_eq!(test_genome.proto_replicons.len(), 1);
 
         // Validate total length of genome against known value
-        assert_eq!(test_genome.genomic_elements[0].replicon_sequence.len(), 4_109_689);
+        assert_eq!(test_genome.proto_replicons[0].replicon_sequence.len(), 4_109_689);
     }
 
     #[test]
@@ -495,11 +496,11 @@ mod tests {
         let mut test_replicons: HashMap<String, ProtoReplicon> = HashMap::new();
         let mut actual_replicons: HashMap<String, ProtoReplicon> = HashMap::new();
 
-        for item in test_genome.genomic_elements.into_iter() {
+        for item in test_genome.proto_replicons.into_iter() {
             test_replicons.insert(item.replicon_accession.clone(), item);
         }
 
-        for item in actual_genome.genomic_elements.into_iter() {
+        for item in actual_genome.proto_replicons.into_iter() {
             actual_replicons.insert(item.replicon_accession.clone(), item);
         }
 
@@ -539,11 +540,11 @@ mod tests {
         assert_eq!(test_genome, actual_genome);
 
         // Validate that the correct number of replicons are parsed
-        assert_eq!(test_genome.genomic_elements.len(), 3);
+        assert_eq!(test_genome.proto_replicons.len(), 3);
 
         // Validate total length of genome against known value
         let mut total_len = 0_usize;
-        for genomic_element in &test_genome.genomic_elements {
+        for genomic_element in &test_genome.proto_replicons {
             total_len += genomic_element.replicon_sequence.len()
         }
         assert_eq!(total_len, 5_356_494);
@@ -564,11 +565,11 @@ mod tests {
         assert_eq!(test_genome, actual_genome);
 
         // Validate that the correct number of replicons are parsed
-        assert_eq!(test_genome.genomic_elements.len(), 1);
+        assert_eq!(test_genome.proto_replicons.len(), 1);
 
         // Validate total length of genome against known value
         let mut total_len = 0_usize;
-        for genomic_element in &test_genome.genomic_elements {
+        for genomic_element in &test_genome.proto_replicons {
             total_len += genomic_element.replicon_sequence.len()
         }
         assert_eq!(total_len, 2_886_678);
@@ -607,11 +608,11 @@ mod tests {
         // Manually defined database entries
         let expected_entry_1 = AnnotationEntry {
             genomic_accession: "NC_000911.1".to_string(),
-            source: "Protein Homology".to_string(),
+            source_database: "Protein Homology".to_string(),
             feature_type: "CDS".to_string(),
-            ord_start_index: 3065617,
-            ord_stop_index: 3066207,
-            replicon_strand: "-".to_string(),
+            start_index_ord: 3065617,
+            end_index_ord: 3066207,
+            replicon_strand: '-',
             attributes: {
                 let mut test_hashmap: HashMap<String, String> = HashMap::new();
                 let test_keys = vec!["ID", "Parent", "Dbxref", "Name", "gbkey", 
@@ -633,11 +634,11 @@ mod tests {
 
         let expected_entry_2 = AnnotationEntry {
             genomic_accession: "NC_005232.1".to_string(),
-            source: "RefSeq".to_string(),
+            source_database: "RefSeq".to_string(),
             feature_type: "gene".to_string(),
-            ord_start_index: 9520,
-            ord_stop_index: 10167,
-            replicon_strand: "-".to_string(),
+            start_index_ord: 9520,
+            end_index_ord: 10167,
+            replicon_strand: '-',
             attributes: {
                 let mut test_hashmap: HashMap<String, String> = HashMap::new();
 
@@ -661,17 +662,17 @@ mod tests {
         let mut entry_comparison: HashMap<usize, AnnotationEntry> = HashMap::new();
         for item in parsed_annotation_entries {
 
-            let entry_1 = item.ord_start_index == 3065617 && item.genomic_accession.eq("NC_000911.1") && item.feature_type.eq("CDS");
-            let entry_2 = item.ord_start_index == 9520 && item.genomic_accession.eq("NC_005232.1") && item.feature_type.eq("gene");
+            let entry_1 = item.start_index_ord == 3065617 && item.genomic_accession.eq("NC_000911.1") && item.feature_type.eq("CDS");
+            let entry_2 = item.start_index_ord == 9520 && item.genomic_accession.eq("NC_005232.1") && item.feature_type.eq("gene");
 
             if entry_1 || entry_2 {
-                entry_comparison.insert(item.ord_start_index, item);
+                entry_comparison.insert(item.start_index_ord, item);
             }
         }
 
         // Compare parsed entries against manual entries
-        assert_eq!(expected_entry_1, *entry_comparison.get(&expected_entry_1.ord_start_index).unwrap());
-        assert_eq!(expected_entry_2, *entry_comparison.get(&expected_entry_2.ord_start_index).unwrap());
+        assert_eq!(expected_entry_1, *entry_comparison.get(&expected_entry_1.start_index_ord).unwrap());
+        assert_eq!(expected_entry_2, *entry_comparison.get(&expected_entry_2.start_index_ord).unwrap());
     }
 
     #[test]

@@ -2,6 +2,7 @@ mod import;
 mod multithreader;
 mod permutations;
 mod genome;
+mod search;
 
 pub mod cop_operon_specific {
     use std::collections::HashMap;

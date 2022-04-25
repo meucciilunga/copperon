@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-pub use std::collections::HashMap;
+use std::collections::HashMap;
 
 // Given a scaffold sequence and a remapping table defined for each target substitutable
 // character in the scaffold, calculate all permutations of the string related to the FIRST 
@@ -43,7 +43,7 @@ fn next_site_permutator(sequence: &String, remapping_table: &HashMap<char, Vec<c
 
 // Given a sequence scaffold and a remapping table defined for each target substitutable position,
 // return a vector containing every possible permutation of the sequence
-pub fn full_seq_permutator(sequence: String, remapping_table: HashMap<char, Vec<char>>) -> Vec<String> {
+fn full_seq_permutator(sequence: String, remapping_table: HashMap<char, Vec<char>>) -> Vec<String> {
     
     // Storage logistics
     let mut curr_permutations: Vec<String> = vec![sequence];
@@ -67,6 +67,22 @@ pub fn full_seq_permutator(sequence: String, remapping_table: HashMap<char, Vec<
         } else {
             curr_permutations = resulting_permutations;
             resulting_permutations = vec![];
+        }
+    }
+}
+
+pub struct SequencePermutations {
+    pub name: String,
+    pub sequences: Vec<String>
+}
+
+impl SequencePermutations {
+    pub fn new(name: String, sequence: String, remapping_table: HashMap<char, Vec<char>>) -> SequencePermutations {
+        let sequences = full_seq_permutator(sequence, remapping_table);
+
+        SequencePermutations { 
+            name,
+            sequences, 
         }
     }
 }
