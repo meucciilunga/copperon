@@ -1,8 +1,44 @@
 #![allow(dead_code)]
 #![allow(unused_imports)]
 
-use crate::import::{self, ProtoGenome, AssemblyMetadata, ProtoReplicon, ProtoRepliconType, AnnotationEntry, BlastDerivedAnnotation};
+use crate::import::{ProtoGenome, AssemblyMetadata, ProtoReplicon, 
+                    ProtoRepliconType, AnnotationEntry, BlastDerivedAnnotation};
 use std::collections::{HashMap, HashSet};
+
+trait GetSequence {
+    fn get_sequence(&self) -> String;
+}
+
+// Special method specific to this module that allows for the generation
+// of the reverse complement of a given sequence; implemented as a default
+// implementation of a trait so the RevComp code can be edited in a one place
+trait ReverseComplement: GetSequence {
+    fn reverse_complement(&self) -> String {
+        let seq = {
+            let na_complement_remapping = |x| {
+                match x {
+                    'A' => 'T',
+                    'C' => 'G',
+                    'G' => 'C',
+                    'T' => 'A',
+                    'U' => 'A',
+                    'R' => 'Y',
+                    'Y' => 'R',
+                    'N' => 'N',
+                     _  =>  panic!("ERROR: replicon sequence contains invalid character."),
+                    // Any other characters are turned back into themselves
+                }
+            };
+
+            self.get_sequence().chars()
+                .rev()
+                .map(na_complement_remapping)
+                .collect::<String>()
+        };
+
+        seq
+    }
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum StrandSense {
@@ -31,23 +67,31 @@ pub enum FeatureType {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct GenomeLocation {
+pub struct GenomeRegion {
     pub replicon_accession: String,
     pub replicon_strand:    StrandSense,
     pub start_index_ord:    usize,
-    pub end_index_ord:     usize,
+    pub end_index_ord:      usize,
 }
 
 pub struct Operator {
-    pub location: GenomeLocation,
+    pub location: GenomeRegion,
     pub seq: String,
-    pub potential_operon: Vec<Gene>
+    pub potential_operon: Option<Vec<Gene>>
 }
+
+impl GetSequence for Operator {
+    fn get_sequence(&self) -> String {
+        self.seq.clone()
+    }
+}
+
+impl ReverseComplement for Operator {}
 
 // Wrapper for BLAST annotation data
 #[derive(Clone, Debug, PartialEq)]
 pub struct BlastFragment {
-    pub location: GenomeLocation,
+    pub location: GenomeRegion,
     pub length: usize,
     pub pident: f64,
     pub evalue: f64,
@@ -58,7 +102,7 @@ pub struct BlastFragment {
 
 impl BlastFragment {
     fn new(input: &BlastDerivedAnnotation) -> BlastFragment {
-        let location = GenomeLocation {
+        let location = GenomeRegion {
             replicon_accession: input.sseqid.clone(),
             replicon_strand: if input.sframe.is_positive() {
                                  StrandSense::Forward
@@ -146,16 +190,16 @@ impl BlastHitsTable {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Gene {
-    pub location: GenomeLocation,
+    pub location: GenomeRegion,
     pub feature_type: FeatureType,
     pub attributes: HashMap<String, String>,
-    pub blast_association: Option<BlastFragment>,
+    pub blast_association: Option<Vec<BlastFragment>>,
 }
 
 impl Gene {
     pub fn from_annotation_entry(input: &AnnotationEntry) -> Gene {
 
-        let location = GenomeLocation {
+        let location = GenomeRegion {
             replicon_accession: input.genomic_accession.clone(),
             replicon_strand: match input.replicon_strand {
                 '+' => StrandSense::Forward,
@@ -192,36 +236,13 @@ pub struct Replicon {
     pub rev_strand: String,
 }
 
-// Special method specific to this module that allows for the generation
-// of the reverse complement of a given ProtoReplicon's sequence
-impl ProtoReplicon {
-
-    fn reverse_complement(&self) -> String {
-        let seq = {
-            let na_complement_remapping = |x| {
-                match x {
-                    'A' => 'T',
-                    'C' => 'G',
-                    'G' => 'C',
-                    'T' => 'A',
-                    'U' => 'A',
-                    'R' => 'Y',
-                    'Y' => 'R',
-                    'N' => 'N',
-                     _  =>  panic!("ERROR: replicon sequence contains invalid character."),
-                    // Any other characters are turned back into themselves
-                }
-            };
-
-            self.replicon_sequence.chars()
-                                  .rev()
-                                  .map(na_complement_remapping)
-                                  .collect::<String>()
-        };
-
-        seq
+impl GetSequence for ProtoReplicon {
+    fn get_sequence(&self) -> String {
+        self.replicon_sequence.clone()
     }
 }
+
+impl ReverseComplement for ProtoReplicon {}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Genome {
@@ -286,7 +307,7 @@ mod tests {
         let test_fragments = [test_fragment_1, test_fragment_2, test_fragment_3];
 
         let actual_fragment_1 = BlastFragment {
-            location: GenomeLocation {
+            location: GenomeRegion {
                 replicon_accession: "NC_003028.3".to_string(),
                 replicon_strand: StrandSense::Forward,
                 start_index_ord: 692412,
@@ -300,7 +321,7 @@ mod tests {
             qend: 747,
         };
         let actual_fragment_2 = BlastFragment {
-            location: GenomeLocation {
+            location: GenomeRegion {
                 replicon_accession: "NZ_CP038808.1".to_string(),
                 replicon_strand: StrandSense::Reverse,
                 start_index_ord: 1446972,
@@ -314,7 +335,7 @@ mod tests {
             qend: 655,
         };
         let actual_fragment_3 = BlastFragment {
-            location: GenomeLocation {
+            location: GenomeRegion {
                 replicon_accession: "NZ_AP018338.1".to_string(),
                 replicon_strand: StrandSense::Reverse,
                 start_index_ord: 1762342,
@@ -345,7 +366,7 @@ mod tests {
         let test_fragments = [test_fragment_1, test_fragment_2, test_fragment_3];
 
         let actual_fragment_1 = BlastFragment {
-            location: GenomeLocation {
+            location: GenomeRegion {
                 replicon_accession: "NC_021181.2".to_string(),
                 replicon_strand: StrandSense::Forward,
                 start_index_ord: 1973909,
@@ -359,7 +380,7 @@ mod tests {
             qend: 132,
         };
         let actual_fragment_2 = BlastFragment {
-            location: GenomeLocation {
+            location: GenomeRegion {
                 replicon_accession: "CP031018.1".to_string(),
                 replicon_strand: StrandSense::Forward,
                 start_index_ord: 2155972,
@@ -373,7 +394,7 @@ mod tests {
             qend: 140,
         };
         let actual_fragment_3 = BlastFragment {
-            location: GenomeLocation {
+            location: GenomeRegion {
                 replicon_accession: "NC_020450.1".to_string(),
                 replicon_strand: StrandSense::Forward,
                 start_index_ord: 818375,
@@ -422,7 +443,7 @@ mod tests {
         let mut test_binding_1: HashMap<String, Vec<BlastFragment>> = HashMap::with_capacity(1);
         let binding_name = "NZ_AKVY01000001.1".to_string();
         let actual_fragment_1 = BlastFragment {
-            location: GenomeLocation {
+            location: GenomeRegion {
                 replicon_accession: "NZ_AKVY01000001.1".to_string(),
                 replicon_strand: StrandSense::Forward,
                 start_index_ord: 694341,
@@ -436,7 +457,7 @@ mod tests {
             qend:   747,
         };
         let actual_fragment_2 = BlastFragment {
-            location: GenomeLocation {
+            location: GenomeRegion {
                 replicon_accession: "NZ_AKVY01000001.1".to_string(),
                 replicon_strand: StrandSense::Reverse,
                 start_index_ord: 2014268,
@@ -450,7 +471,7 @@ mod tests {
             qend:   664,
         };
         let actual_fragment_3 = BlastFragment {
-            location: GenomeLocation {
+            location: GenomeRegion {
                 replicon_accession: "NZ_AKVY01000001.1".to_string(),
                 replicon_strand: StrandSense::Reverse,
                 start_index_ord: 1527501,
@@ -499,7 +520,7 @@ mod tests {
 
         // Test-case 1
         let actual_fragment = BlastFragment {
-            location: GenomeLocation {
+            location: GenomeRegion {
                 replicon_accession: "NZ_CP061021.1".to_string(),
                 replicon_strand: StrandSense::Reverse,
                 start_index_ord: 1527375,
@@ -521,7 +542,7 @@ mod tests {
 
         // Test-case 2
         let actual_fragment = BlastFragment {
-            location: GenomeLocation {
+            location: GenomeRegion {
                 replicon_accession: "NZ_AP024837.1".to_string(),
                 replicon_strand: StrandSense::Reverse,
                 start_index_ord: 1823308,
@@ -544,7 +565,7 @@ mod tests {
         // Test-case 3 -- interesting opportunity to test two fragments at once since they are consecutive
         // in the actual BLAST results table
         let actual_fragment_1 = BlastFragment {
-            location: GenomeLocation {
+            location: GenomeRegion {
                 replicon_accession: "NZ_CP014144.1".to_string(),
                 replicon_strand: StrandSense::Forward,
                 start_index_ord: 107183,
@@ -559,7 +580,7 @@ mod tests {
         };
 
         let actual_fragment_2 = BlastFragment {
-            location: GenomeLocation {
+            location: GenomeRegion {
                 replicon_accession: "NZ_CP014144.1".to_string(),
                 replicon_strand: StrandSense::Forward,
                 start_index_ord: 1641099,
@@ -595,7 +616,7 @@ mod tests {
 
         // Test-case 1
         let actual_gene_1 = Gene {
-            location: GenomeLocation {
+            location: GenomeRegion {
                 replicon_accession: "NC_000911.1".to_string(),
                 replicon_strand: StrandSense::Forward,
                 start_index_ord: 1,
@@ -628,7 +649,7 @@ mod tests {
 
         // Test-case 2
         let actual_gene_2 = Gene {
-            location: GenomeLocation {
+            location: GenomeRegion {
                 replicon_accession: "NC_005230.1".to_string(),
                 replicon_strand: StrandSense::Forward,
                 start_index_ord: 1,
@@ -658,7 +679,7 @@ mod tests {
 
         // Test-case 3
         let actual_gene_3 = Gene {
-            location: GenomeLocation {
+            location: GenomeRegion {
                 replicon_accession: "NC_000911.1".to_string(),
                 replicon_strand: StrandSense::Reverse,
                 start_index_ord: 175143,
@@ -690,7 +711,7 @@ mod tests {
 
         // Test-case 4
         let actual_gene_4 = Gene {
-            location: GenomeLocation {
+            location: GenomeRegion {
                 replicon_accession: "NC_005231.1".to_string(),
                 replicon_strand: StrandSense::Forward,
                 start_index_ord: 25147,
