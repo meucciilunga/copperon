@@ -226,6 +226,10 @@ impl Gene {
             blast_association: None,
         }
     }
+
+    pub fn convert_annotation_entry_list(input: &Vec<AnnotationEntry>) -> Vec<Gene> {
+        input.iter().map(|x| Gene::from_annotation_entry(x)).collect::<Vec<Gene>>()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -234,6 +238,7 @@ pub struct Replicon {
     pub replicon_type: RepliconType,
     pub fwd_strand: String,
     pub rev_strand: String,
+    pub len: usize,
 }
 
 impl GetSequence for ProtoReplicon {
@@ -253,7 +258,7 @@ pub struct Genome {
 
 impl Genome {
     pub fn from_proto(input_data: ProtoGenome, 
-                  metadata: AssemblyMetadata,
+                  input_metadata: &AssemblyMetadata,
                   genes: Option<Vec<Gene>>) -> Genome {
         
         // Storage Logistics
@@ -269,12 +274,14 @@ impl Genome {
             };
             let fwd_strand = proto_replicon_strand.replicon_sequence.clone();
             let rev_strand = proto_replicon_strand.reverse_complement();
+            let len = fwd_strand.len();
 
             let new_replicon = Replicon {
                 accession_id: proto_replicon_strand.replicon_accession.clone(),
                 replicon_type,
                 fwd_strand,
                 rev_strand,
+                len,
             };
 
             // Map new replicon to its accession id
@@ -283,13 +290,27 @@ impl Genome {
 
         // Link genome metadata, genome sequence data, and genome annotation data into unified data structure
         Genome {
-            metadata,
+            metadata: input_metadata.clone(),
             replicons,
             genes,
         }
     }
 }
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+// UNIT TESTS
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -823,6 +844,7 @@ mod tests {
             replicon_type: RepliconType::Chromosome,
             fwd_strand: "ATGCACNNNNNATCG".to_string(),
             rev_strand: "CGATNNNNNGTGCAT".to_string(),
+            len: "ATGCACNNNNNATCG".len()
         };
 
         let actual_replicon_2 = Replicon {
@@ -830,6 +852,7 @@ mod tests {
             replicon_type: RepliconType::Plasmid,
             fwd_strand: "NNNAAAYYYNNNGGGCCCAAATTTAAARRRUUUU".to_string(),
             rev_strand: "AAAAYYYTTTAAATTTGGGCCCNNNRRRTTTNNN".to_string(),
+            len: "NNNAAAYYYNNNGGGCCCAAATTTAAARRRUUUU".len(),
         };
 
         let mut replicon_map: HashMap<String, Replicon> = HashMap::with_capacity(2);
@@ -842,7 +865,7 @@ mod tests {
             genes: None,
         };
 
-        let test_genome = Genome::from_proto(protogenome, metadata, None);
+        let test_genome = Genome::from_proto(protogenome, &metadata, None);
 
         assert_eq!(actual_genome, test_genome);
     }

@@ -47,7 +47,7 @@ pub fn import_database_summary(summary_file_path: PathBuf) -> HashMap<String, As
     database_metadata_table
 }
 
-pub fn parse_genome_sequence(assembly_name: String, genome_fasta_file: PathBuf) -> ProtoGenome {
+pub fn parse_genome_sequence(assembly_name: &String, genome_fasta_file: PathBuf) -> ProtoGenome {
     
     // Read-in genome sequence file
     let file = File::open(genome_fasta_file).expect("ERROR: could not open genome sequence file!");
@@ -146,7 +146,7 @@ pub fn parse_genome_sequence(assembly_name: String, genome_fasta_file: PathBuf) 
 
     // Wrap all derived data into a genome sequence struct
     ProtoGenome {
-        assembly_name,
+        assembly_name: assembly_name.clone(),
         proto_replicons: replicon_data
     }
 }
@@ -352,6 +352,21 @@ impl BlastDerivedAnnotation {
     }
 }
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// UNIT TESTS
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -469,7 +484,7 @@ mod tests {
     fn test_parse_genome_sequence_1() {
         let test_file = "tests/test_assets/GCA_000152665.1_ASM15266v1/GCA_000152665.1_ASM15266v1_genomic.fna";
         let test_file = PathBuf::from(test_file);
-        let test_genome = parse_genome_sequence("GCA_000152665.1_ASM15266v1".to_string(), test_file);
+        let test_genome = parse_genome_sequence(&"GCA_000152665.1_ASM15266v1".to_string(), test_file);
 
         let confirmation_dir = PathBuf::from("tests/test_assets/preprocessed_test_genomes/GCA_000152665.1_ASM15266v1");
         let actual_genome = parse_confirmation_genome_dir(confirmation_dir);
@@ -488,7 +503,7 @@ mod tests {
     fn test_parse_genome_sequence_2() {
         let test_file = "tests/test_assets/GCF_000009725.1_ASM972v1/GCF_000009725.1_ASM972v1_genomic.fna";
         let test_file = PathBuf::from(test_file);
-        let test_genome = parse_genome_sequence("GCF_000009725.1_ASM972v1".to_string(), test_file);
+        let test_genome = parse_genome_sequence(&"GCF_000009725.1_ASM972v1".to_string(), test_file);
 
         let confirmation_dir = PathBuf::from("tests/test_assets/preprocessed_test_genomes/GCF_000009725.1_ASM972v1");
         let actual_genome = parse_confirmation_genome_dir(confirmation_dir);
@@ -531,7 +546,7 @@ mod tests {
     fn test_parse_genome_sequence_3() {
         let test_file = "tests/test_assets/GCF_014107515.1_ASM1410751v1/GCF_014107515.1_ASM1410751v1_genomic.fna";
         let test_file = PathBuf::from(test_file);
-        let test_genome = parse_genome_sequence("GCF_014107515.1_ASM1410751v1".to_string(), test_file);
+        let test_genome = parse_genome_sequence(&"GCF_014107515.1_ASM1410751v1".to_string(), test_file);
 
         let confirmation_dir = PathBuf::from("tests/test_assets/preprocessed_test_genomes/GCF_014107515.1_ASM1410751v1");
         let actual_genome = parse_confirmation_genome_dir(confirmation_dir);
@@ -556,7 +571,7 @@ mod tests {
         // SINCE CONFIRMATION INPUT IS ALL UPPERCASE
         let test_file = "tests/test_assets/GCF_016889785.1_ASM1688978v1/GCF_016889785.1_ASM1688978v1_genomic.fna";
         let test_file = PathBuf::from(test_file);
-        let test_genome = parse_genome_sequence("GCF_016889785.1_ASM1688978v1".to_string(), test_file);
+        let test_genome = parse_genome_sequence(&"GCF_016889785.1_ASM1688978v1".to_string(), test_file);
 
         let confirmation_dir = PathBuf::from("tests/test_assets/preprocessed_test_genomes/GCF_016889785.1_ASM1688978v1");
         let actual_genome = parse_confirmation_genome_dir(confirmation_dir);
@@ -579,7 +594,7 @@ mod tests {
     fn test_parse_genome_sequence_5() {
         let test_file = "tests/test_assets/GCF_016889785.1_ASM1688978v1/GCF_016889785.1_ASM1688978v1_genomic.fna";
         let test_file = PathBuf::from(test_file);
-        let test_genome = parse_genome_sequence("GCF_016889785.1_ASM1688978v1".to_string(), test_file);
+        let test_genome = parse_genome_sequence(&"GCF_016889785.1_ASM1688978v1".to_string(), test_file);
 
         let confirmation_dir = PathBuf::from("tests/test_assets/preprocessed_test_genomes/GCF_000009725.1_ASM972v1");
         let actual_genome = parse_confirmation_genome_dir(confirmation_dir);
@@ -591,7 +606,7 @@ mod tests {
     fn test_parse_genome_sequence_6() {
         let test_file = "tests/test_assets/GCF_000009725.1_ASM972v1/GCF_000009725.1_ASM972v1_genomic.fna";
         let test_file = PathBuf::from(test_file);
-        let expected_genome = parse_genome_sequence("GCF_000009725.1_ASM972v1_missing_files".to_string(), test_file);
+        let expected_genome = parse_genome_sequence(&"GCF_000009725.1_ASM972v1_missing_files".to_string(), test_file);
 
         let confirmation_dir = PathBuf::from("tests/test_assets/preprocessed_test_genomes/GCF_000009725.1_ASM972v1_missing_files");
         let actual_genome = parse_confirmation_genome_dir(confirmation_dir);

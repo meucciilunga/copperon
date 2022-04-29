@@ -87,6 +87,24 @@ impl SequencePermutations {
     }
 }
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// UNIT TESTS
 #[cfg(test)]
 mod test {
     use super::*;

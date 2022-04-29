@@ -1,0 +1,36 @@
+# Assembly name:  ASM522132v1
+# Organism name:  Agrobacterium tumefaciens (a-proteobacteria)
+# Infraspecific name:  strain=CFBP5499
+# Taxid:          358
+# BioSample:      SAMN11489449
+# BioProject:     PRJNA534389
+# Submitter:      Academia Sinica
+# Date:           2019-05-07
+# Assembly type:  na
+# Release type:   major
+# Assembly level: Complete Genome
+# Genome representation: full
+# Assembly method: Velvet v. 1.2.10
+# Expected final version: yes
+# Genome coverage: 193.0x
+# Sequencing technology: Illumina MiSeq
+# GenBank assembly accession: GCA_005221325.1
+# RefSeq assembly accession: GCF_005221325.1
+# RefSeq assembly and GenBank assemblies identical: yes
+#
+## Assembly-Units:
+## GenBank Unit Accession	RefSeq Unit Accession	Assembly-Unit name
+## GCA_005221335.1	GCF_005221335.1	Primary Assembly
+#
+# Ordered by chromosome/plasmid; the chromosomes/plasmids are followed by
+# unlocalized scaffolds.
+# Unplaced scaffolds are listed at the end.
+# RefSeq is equal or derived from GenBank object.
+#
+# Sequence-Name	Sequence-Role	Assigned-Molecule	Assigned-Molecule-Location/Type	GenBank-Accn	Relationship	RefSeq-Accn	Assembly-Unit	Sequence-Length	UCSC-style-name
+circular	assembled-molecule	circular	Chromosome	CP039888.1	=	NZ_CP039888.1	Primary Assembly	2949438	na
+linear	assembled-molecule	linear	Chromosome	CP039889.1	=	NZ_CP039889.1	Primary Assembly	2301325	na
+pAtCFBP5499a	assembled-molecule	pAtCFBP5499a	Plasmid	CP039890.1	=	NZ_CP039890.1	Primary Assembly	438854	na
+pAtCFBP5499b	assembled-molecule	pAtCFBP5499b	Plasmid	CP039891.1	=	NZ_CP039891.1	Primary Assembly	158104	na
+pAtCFBP5499c	assembled-molecule	pAtCFBP5499c	Plasmid	CP039892.1	=	NZ_CP039892.1	Primary Assembly	70848	na
+pTiCFBP5499	assembled-molecule	pTiCFBP5499	Plasmid	CP039893.1	=	NZ_CP039893.1	Primary Assembly	220025	na
