@@ -99,7 +99,30 @@ impl GenomeVector {
 
     // Returns shortest angle (in radians) between two vectors
     fn angle(&self, other: &Self) -> f64 {
-        let theta = self.normalize().dot(&other.normalize());
+
+        // Only normalize if vectors aren't already unit vectors; otherwise,
+        // normalization would just add unncessary error; this was revealed
+        // during unit testing, as the four genome_arc_delta_tests, which have 
+        // passing values that were set during my initial round of unit testing
+        // with them, failed if an already normalized vector was normalized again.
+
+        let a_diff = (self.magnitude() - 1.0).abs();
+        let b_diff = (other.magnitude() - 1.0).abs();
+        let delta = 1e-12;
+
+        let a = if a_diff > delta   {
+            self.normalize()
+        } else {
+            self.clone()
+        };
+
+        let b = if b_diff > delta   {
+            other.normalize()
+        } else {
+            other.clone()
+        };
+        
+        let theta = a.dot(&b);
         theta.acos()
     }   
 }
