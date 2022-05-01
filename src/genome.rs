@@ -5,14 +5,14 @@ use crate::import::{ProtoGenome, AssemblyMetadata, ProtoReplicon,
                     ProtoRepliconType, AnnotationEntry, BlastDerivedAnnotation};
 use std::collections::{HashMap, HashSet};
 
-trait GetSequence {
+pub trait GetSequence {
     fn get_sequence(&self) -> String;
 }
 
 // Special method specific to this module that allows for the generation
 // of the reverse complement of a given sequence; implemented as a default
 // implementation of a trait so the RevComp code can be edited in a one place
-trait ReverseComplement: GetSequence {
+pub trait ReverseComplement: GetSequence {
     fn reverse_complement(&self) -> String {
         let seq = {
             let na_complement_remapping = |x| {
@@ -74,20 +74,6 @@ pub struct GenomeRegion {
     pub end_index_ord:      usize,
 }
 
-pub struct Operator {
-    pub location: GenomeRegion,
-    pub seq: String,
-    pub potential_operon: Option<Vec<Gene>>
-}
-
-impl GetSequence for Operator {
-    fn get_sequence(&self) -> String {
-        self.seq.clone()
-    }
-}
-
-impl ReverseComplement for Operator {}
-
 // Wrapper for BLAST annotation data
 #[derive(Clone, Debug, PartialEq)]
 pub struct BlastFragment {
@@ -136,8 +122,8 @@ impl BlastFragment {
 
 // Wrapper for accessing BLAST annotation data via genome accession id
 pub struct BlastHitsTable {
-    pub table_name: String,
-    pub results_table: HashMap<String, Vec<BlastFragment>>,
+    pub name: String,
+    pub table: HashMap<String, Vec<BlastFragment>>,
     // The HashMap links every genome (via its accession id) to all known
     // BLAST hits found within that genome for a given BLAST search; the
     // table is derived from a vector containing all known BLAST results
@@ -182,8 +168,8 @@ impl BlastHitsTable {
         };
 
         BlastHitsTable {
-            table_name,
-            results_table,
+            name: table_name,
+            table: results_table,
         }
     }
 }
@@ -193,7 +179,6 @@ pub struct Gene {
     pub location: GenomeRegion,
     pub feature_type: FeatureType,
     pub attributes: HashMap<String, String>,
-    pub blast_association: Option<Vec<BlastFragment>>,
 }
 
 impl Gene {
@@ -223,7 +208,6 @@ impl Gene {
             location,
             feature_type,
             attributes: input.attributes.clone(),
-            blast_association: None,
         }
     }
 
@@ -449,11 +433,11 @@ mod tests {
         // Test that we have the expected number of keys for CopA; value for 
         // correct answer was derived from Python Script whose source code
         // is located here: tests/test_assets/CopA_blast_result.txt
-        assert_eq!(25000, test_blast_table.results_table.len());
+        assert_eq!(25000, test_blast_table.table.len());
 
         // Test that we have the expect number of BlastFragment entries after building the hashtable
         let mut tot_num_entries = 0;
-        for blast_results_list in test_blast_table.results_table.values() {
+        for blast_results_list in test_blast_table.table.values() {
             tot_num_entries += blast_results_list.len();
         }
         assert_eq!(101_314, tot_num_entries);
@@ -508,7 +492,7 @@ mod tests {
         let binding_vec = vec![actual_fragment_1, actual_fragment_2, actual_fragment_3];
         test_binding_1.insert(binding_name, binding_vec);
 
-        let actual = test_blast_table.results_table.get("NZ_AKVY01000001.1").unwrap();
+        let actual = test_blast_table.table.get("NZ_AKVY01000001.1").unwrap();
         let test = test_binding_1.get("NZ_AKVY01000001.1").unwrap();
         assert_eq!(actual, test);
     }
@@ -527,11 +511,11 @@ mod tests {
         // Test that we have the expected number of keys for CopY; value for 
         // correct answer was derived from Python Script whose source code
         // is located here: tests/test_assets/CopA_blast_result.txt
-        assert_eq!(4966, test_blast_table.results_table.len());
+        assert_eq!(4966, test_blast_table.table.len());
 
         // Test that we have the expect number of BlastFragment entries after building the hashtable
         let mut tot_num_entries = 0;
-        for blast_results_list in test_blast_table.results_table.values() {
+        for blast_results_list in test_blast_table.table.values() {
             tot_num_entries += blast_results_list.len();
         }
         assert_eq!(123_173, tot_num_entries);
@@ -556,7 +540,7 @@ mod tests {
         };
 
         // Test to see if first element of results table matches
-        let test_fragment = test_blast_table.results_table.get("NZ_CP061021.1").unwrap()[0].clone();
+        let test_fragment = test_blast_table.table.get("NZ_CP061021.1").unwrap()[0].clone();
         assert_eq!(actual_fragment, test_fragment);
 
 
@@ -578,7 +562,7 @@ mod tests {
         };
 
         // Test to see if first element of results table matches
-        let test_fragment = test_blast_table.results_table.get("NZ_AP024837.1").unwrap()[15].clone();
+        let test_fragment = test_blast_table.table.get("NZ_AP024837.1").unwrap()[15].clone();
         assert_eq!(actual_fragment, test_fragment);
 
 
@@ -618,7 +602,7 @@ mod tests {
         //let actual = &actual_fragments[..];
 
         // Test to see if first element of results table matches
-        let test = test_blast_table.results_table.get("NZ_CP014144.1").unwrap();
+        let test = test_blast_table.table.get("NZ_CP014144.1").unwrap();
 
         assert_eq!(&actual_fragments[..], &test[40..=41]);
     }
@@ -663,7 +647,6 @@ mod tests {
                                 .map(|x| (x[0].clone(), x[1].clone()))
                                 .collect::<HashMap<String, String>>()
             },
-            blast_association: None,
         };
         assert_eq!(actual_gene_1, test_gene_1);
         
@@ -693,7 +676,6 @@ mod tests {
                                                     .map(|x| (x[0].clone(), x[1].clone()))
                                                     .collect::<HashMap<String, String>>()
             },
-            blast_association: None,
         };
         assert_eq!(actual_gene_2, test_gene_2);
 
@@ -725,7 +707,6 @@ mod tests {
                                 .map(|x| (x[0].clone(), x[1].clone()))
                                 .collect::<HashMap<String, String>>()
             },
-            blast_association: None,
         };
         assert_eq!(actual_gene_3, test_gene_3);
 
@@ -758,7 +739,6 @@ mod tests {
                                 .map(|x| (x[0].clone(), x[1].clone()))
                                 .collect::<HashMap<String, String>>()
             },
-            blast_association: None,
         };
         assert_eq!(actual_gene_4, test_gene_4);
     }

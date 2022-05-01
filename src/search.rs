@@ -2,10 +2,11 @@
 #![allow(unused_imports)]
 #![allow(unused_variables)]
 
-use crate::genome::{self, Gene, Genome, Operator, GenomeRegion, StrandSense, BlastFragment, Replicon};
+use crate::genome::{self, Gene, Genome, GenomeRegion, StrandSense, BlastFragment, Replicon, GetSequence, ReverseComplement};
 use crate::permutations::SequencePermutations;
 use std::f64::consts::PI;
-use std::ops::{Add, Sub};
+use std::ops::{Add, Sub, Index};
+use std::collections::{HashSet, HashMap};
 
 enum SpatialRelationship {
     Neighbor(NeighborType),
@@ -23,6 +24,18 @@ enum OverlapType {
     ThreePrimeBoundary,
     EngulfedBy,
     ContainerOf,
+}
+
+enum GenomeObject<'blast, 'genome> {
+    Gene(SearchGene<'blast, 'genome>),
+    Operator(Operator<'genome>),
+    Blast(SearchBlastFragment<'blast, 'genome>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum PalindromeStatus {
+    Yes,
+    No,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -52,7 +65,9 @@ impl Sub for &GenomeVector {
 
 impl GenomeVector {
 
-    // Converts a genome position in linear space to circular space, based on the size of the circular genome / replicon
+    // Converts a genome position in linear space to circular space, based on the size of the circular genome / replicon;
+    // because bounds can only fall on real numbers, the std version of this method operates only on usize, since all ordinal
+    // indicies are usize, and the bound indicies are derived directly from those
     fn new(bound_index: usize, replicon_size: usize) -> GenomeVector {
 
         let n = (bound_index % replicon_size) as f64;
@@ -100,52 +115,68 @@ impl GenomeVector {
     // Returns shortest angle (in radians) between two vectors
     fn angle(&self, other: &Self) -> f64 {
 
-        // Only normalize if vectors aren't already unit vectors; otherwise,
-        // normalization would just add unncessary error; this was revealed
-        // during unit testing, as the four genome_arc_delta_tests, which have 
-        // passing values that were set during my initial round of unit testing
-        // with them, failed if an already normalized vector was normalized again.
-
-        let a_diff = (self.magnitude() - 1.0).abs();
-        let b_diff = (other.magnitude() - 1.0).abs();
-        let delta = 1e-12;
-
-        let a = if a_diff > delta   {
-            self.normalize()
-        } else {
-            self.clone()
-        };
-
-        let b = if b_diff > delta   {
-            other.normalize()
-        } else {
-            other.clone()
-        };
+        // OLD ALGORITHM, based on simple linear algebra -- Keeping in codebase, commented out, for future reference;
+        // I compared the results I got from this old algorithm with new one below for calculating the values of arc lengths,
+        // which depends on accurately knowing the angle between two vectors; the new algorithm has a delta-value (i.e., 
+        // the magnitude of the difference between real value and calculate value) significantly lower than this old algorithm
         
-        let theta = a.dot(&b);
-        theta.acos()
+        // let theta = self.dot(&other) / (self.magnitude() * other.magnitude());
+        // theta.acos()
+
+        // NEW ALGORITHM, taken from: Miscalculating Area and Angles of a Needle-like Triangle (2014) by Prof. W. Kahan:
+        // http://http.cs.berkeley.edu/~wkahan/Triangle.pdf
+        // Algorithm was also discussed on this SciComp stackexchange thread, which is where I originally found it:
+        // https://scicomp.stackexchange.com/questions/27689/numerically-stable-way-of-computing-angles-between-vectors
+        // While writing unit tests, I found that while the old algorithm was 'good enough', this one produced much smaller
+        // arc-length delta-values, so I obviously elected to use this algorithm instead of the old one.
+        
+        let a = self.magnitude();
+        let b = other.magnitude();
+        let c = (self - other).magnitude();
+
+        let mu = if (b >= c) && (c >= 0.0) {
+            c - (a - b)
+        } else if (c > b) && (b >= 0.0) {
+            b - (a - c)
+        } else {
+            panic!("ERROR: Invalid triangle!")
+        };
+
+        let top = ((a - b) + c) * mu;
+        let bottom = (a + (b + c)) * ((a - c) + b);
+        let theta = (top / bottom).sqrt();
+        let angle = 2.0 * theta.atan();
+
+        angle
     }   
 }
 
-// Defines a location in a linear genome by its BOUNDARY INDICIES
-// NOT BY ITS ORDINAL INDICIES; BOUNDARY INDICIES ∈ ℝ (approximated by f64)
+// Defines a location on a linear genome by its BOUNDARY INDICIES
+// NOT BY ITS ORDINAL INDICIES; BOUNDARY INDICIES ∈ ℝ while ORDINAL INDICIES ∈ ℕ;
+//          START BOUND == START INDEX - 1; END BOUND == END INDEX
+// NOTE: implementation of the reference structure of this struct is such that 
+// you need to have a genome instance before you can have a LinearGenomeLocation; 
+// this makes some practical and intuitive sense as a GenomeLocation (whether circular 
+// or linear) only really makes sense when tied to a specific genome. It wouldn't  
+// make sense to have a location pointing to a place on an object that doesn't exist
 #[derive(Debug, Clone, PartialEq)]
-struct LinearGenomeLocation {
-    id: String,
+struct LinearGenomeLocation<'genome> {
+    replicon: &'genome Replicon,
     strand: StrandSense,
     start_bound: usize,
     end_bound: usize,
 }
 
-impl LinearGenomeLocation {
-    fn new(input: &GenomeRegion) -> LinearGenomeLocation {
-        let id = input.replicon_accession.clone();
+impl<'genome> LinearGenomeLocation<'genome> {
+    fn new(input: &GenomeRegion, parent: &'genome Genome) -> LinearGenomeLocation<'genome> {
+        let genome_err = "ERROR: could not find replicon denoted in GenomeRegion in the parent Genome supplied!";
+        let replicon = parent.replicons.get(&input.replicon_accession).expect(genome_err);
         let strand = input.replicon_strand.clone();
         let left = input.start_index_ord - 1;
         let right = input.end_index_ord;
 
         LinearGenomeLocation {
-            id,
+            replicon,
             strand,
             start_bound: left,
             end_bound: right,
@@ -153,42 +184,337 @@ impl LinearGenomeLocation {
     }
 }
 
+// Simply holds a linear genome location converted to its circular form
 #[derive(Debug, Clone, PartialEq)]
-struct CircularGenomeLocation<'a> {
-    replicon: &'a Replicon,
+struct CircularGenomeLocation<'genome> {
+    replicon: &'genome Replicon,
     strand: StrandSense,
     start_unit_vec: GenomeVector,
     end_unit_vec: GenomeVector,
-    position: GenomeVector,
+    center: GenomeVector,
+    arc_length: f64
 }
 
-impl<'a> CircularGenomeLocation<'a> {
-    fn new(input: &LinearGenomeLocation, genome: &'a Genome) -> CircularGenomeLocation<'a> {
+impl<'genome> CircularGenomeLocation<'genome> {
 
-        let replicon_err = "ERROR: could not find GenomeRegion's replicon in specified Genome!";
-        let replicon = genome.replicons.get(&input.id).expect(replicon_err);
+    // Simply converts a linear genome location to its circular equivalent
+    fn new(input: &LinearGenomeLocation<'genome>) -> CircularGenomeLocation<'genome> {
+
+        // Replicon logistics
+        let replicon: &'genome Replicon = input.replicon;
         let replicon_len = replicon.fwd_strand.len();
         let replicon_radius = (replicon_len as f64) / (2.0 * PI);
-
         let strand = input.strand.clone();
-        
+
+        // Circular positioning logistics
         let start_unit_vec = GenomeVector::new(input.start_bound, replicon_len);
         let end_unit_vec = GenomeVector::new(input.end_bound, replicon_len);
-        let center_unit_vec = (&start_unit_vec + &end_unit_vec).normalize();
-        let mut arc_length = start_unit_vec.angle(&end_unit_vec) * replicon_radius;
+        let arc_orientation = start_unit_vec.cross(&end_unit_vec);
+        let center_unit_vec: GenomeVector;
+        let arc_length: f64;
 
-        if arc_length.abs() < 0.25 {
-            arc_length = 1.0;
+        // Arc length and center vector depend on the spatial orientation b/w the bounding start- and end-vectors
+        if arc_orientation > 0.0 {
+            center_unit_vec = (&start_unit_vec + &end_unit_vec).normalize();
+            arc_length = start_unit_vec.angle(&end_unit_vec) * replicon_radius;
+        } else if arc_orientation < 0.0 {
+            center_unit_vec = (&start_unit_vec + &end_unit_vec).normalize().scalar(-1.0);
+            arc_length = (2.0 * PI - start_unit_vec.angle(&end_unit_vec)) * replicon_radius;
+        } else {
+            if input.start_bound == input.end_bound {
+                center_unit_vec = (&start_unit_vec + &end_unit_vec).normalize();
+                arc_length = start_unit_vec.angle(&end_unit_vec) * replicon_radius;
+            } else {
+                center_unit_vec = (&start_unit_vec + &end_unit_vec).normalize().scalar(-1.0);
+                arc_length = (2.0 * PI - start_unit_vec.angle(&end_unit_vec)) * replicon_radius;
+            }
         }
-
-        let position = center_unit_vec.scalar(arc_length);
 
         CircularGenomeLocation {
             replicon,
             strand,
             start_unit_vec,
             end_unit_vec,
-            position,
+            center: center_unit_vec,
+            arc_length
+        }
+    }
+}
+
+// Implement light wrappers around elements from Genome module to facilitate easier implementation 
+// of LocateOnLinearGenome trait
+struct SearchGenome<'genome, 'blast> {
+    genome:     &'genome Genome,
+    genes:      Option<Vec<SearchGene<'blast, 'genome>>>,
+    operators:  Option<Vec<Operator<'genome>>>,
+    fragments:  Option<Vec<SearchBlastFragment<'blast, 'genome>>>
+}
+
+impl<'genome, 'blast, 'seq> SearchGenome<'genome, 'blast> {
+    fn new(genome: &'genome Genome, permutations: &'seq SequencePermutations) -> SearchGenome<'genome, 'blast> {
+        
+        let genes = match &genome.genes {
+            Some(genes) => {
+                let mut list_of_searchable_genes: Vec<SearchGene> = Vec::with_capacity(genes.len());
+
+                for gene in genes.iter() {
+                    let new_search_gene = SearchGene {
+                        gene,
+                        linear_location: LinearGenomeLocation::new(&gene.location, &genome),
+                        blast_association: None,
+                    };
+                    list_of_searchable_genes.push(new_search_gene);
+                }
+
+                Some(list_of_searchable_genes)
+            }
+
+            None => None,
+        };
+
+        let mut proto_search_genome = SearchGenome {
+            genome,
+            genes,
+            operators: None,
+            fragments: None,
+        };
+
+        let operators = find_genome_operators(&mut proto_search_genome, permutations);
+
+        proto_search_genome
+    }
+}
+
+struct SearchGene<'blast, 'genome> {
+    gene: &'genome Gene,
+    linear_location: LinearGenomeLocation<'genome>,
+    blast_association: Option<Vec<&'blast BlastFragment>>,
+}
+
+struct SearchBlastFragment<'blast, 'genome> {
+    blast: &'blast BlastFragment,
+    linear_location: LinearGenomeLocation<'genome>,
+}
+
+// Operator Data Structre + Related Methods
+#[derive(Debug, Clone, PartialEq)]
+struct Operator<'genome> {
+    linear_location: LinearGenomeLocation<'genome>,
+    seq: String,
+    palindromic: PalindromeStatus,
+}
+
+impl<'genome> genome::GetSequence for Operator<'genome> {
+    fn get_sequence(&self) -> String {
+        self.seq.clone()
+    }
+}
+
+impl<'genome> genome::ReverseComplement for Operator<'genome> {}
+
+// Implement locate on LinearGenomeTraits for all searchable elements
+trait LocateOnLinearGenome {
+    fn get_linear_location(&self) -> &LinearGenomeLocation;
+}
+
+impl<'gene, 'blast, 'genome> LocateOnLinearGenome for SearchGene<'blast, 'genome> {
+    fn get_linear_location(&self) -> &LinearGenomeLocation {
+        &self.linear_location
+    }
+}
+
+impl<'genome> LocateOnLinearGenome for Operator<'genome> {
+    fn get_linear_location(&self) -> &LinearGenomeLocation {
+        &self.linear_location
+    }
+}
+
+impl<'blast, 'genome> LocateOnLinearGenome for SearchBlastFragment<'blast, 'genome> {
+    fn get_linear_location(&self) -> &LinearGenomeLocation {
+        &self.linear_location
+    }
+}
+
+// Given a genome and all the sequence permutations of an (operator) consensus sequence,
+// locate all places in the genome where some variant of the consensus sequence is found.
+fn find_genome_operators<'genome>(target_genome: &mut SearchGenome<'genome, '_>, query: &SequencePermutations) {
+
+    // Define chunk length based on size of first element in sequence permutation list
+    let chunk_len: usize = query.sequences[0].len();
+
+    // Convert list of sequences into a hashset
+    let permutations: HashSet<&str> = query.sequences.iter().map(|x| &x[..]).collect();
+
+    // Private function for performing search operation against a single sequence
+    fn locate_matching_subsequences(chunk_len: usize, queries: &HashSet<&str>, subject_seq: String, replicon_len: usize, strand: StrandSense) -> Option<Vec<(String, (usize, usize))>> { 
+
+        let search_len = subject_seq.len() - chunk_len;
+        let mut results: Vec<(String, (usize, usize))> = Vec::new();
+
+        for start_bound_index in 0..=search_len {
+            let start = start_bound_index;
+            let end = start + chunk_len;
+
+            // Check if subject-derived 'word' (16-mer chunk) is in the database of known permutations 
+            let valid = queries.get(&subject_seq[start..end]);
+
+            let find = match valid {
+                Some(&seq) => {
+                    let mut ord_start = start_bound_index + 1;
+                    let mut ord_end = ord_start + chunk_len - 1;
+                    let ord_indicies;
+
+                    match strand {
+                        StrandSense::Forward | StrandSense::Other => {},
+                        StrandSense::Reverse => {
+                            let ord_start_tmp = (-1 * ord_start as i64).rem_euclid(replicon_len as i64) as usize;
+                            let ord_end_tmp = (-1 * ord_end as i64).rem_euclid(replicon_len as i64) as usize;
+
+                            ord_start = ord_end_tmp + 1;
+                            ord_end = ord_start_tmp + 1;
+                        },
+                    }
+
+                    ord_indicies = (ord_start, ord_end);
+                    let new_entry = (seq.to_string(), ord_indicies);
+                    results.push(new_entry)
+                },
+                None => continue,
+            };
+        }
+
+        match results.len() {
+            0 => None,
+            _ => Some(results)
+        }
+    }
+
+    fn process_proto_operator_data<'genome>(finds: Vec<(String, (usize, usize))>, direction: StrandSense, parent_genome: &SearchGenome<'genome, '_>, parent_replicon: &Replicon) -> Vec<Operator<'genome>> {
+
+        let mut storage: Vec<Operator> = Vec::new();
+
+        for proto_operator in finds {
+            let tmp_genome_region = GenomeRegion {
+                replicon_accession: parent_replicon.accession_id.clone(),
+                replicon_strand: direction.clone(),
+                start_index_ord: proto_operator.1.0,
+                end_index_ord: proto_operator.1.1,
+            };
+
+            let fwd_seq = proto_operator.0.clone();
+            let rev_seq = proto_operator.0.chars().rev().collect::<String>();
+            
+            let new_operator = Operator {
+                linear_location: LinearGenomeLocation::new(&tmp_genome_region, parent_genome.genome),
+                seq: proto_operator.0,
+                palindromic: PalindromeStatus::No,
+            };
+
+            storage.push(new_operator);
+        }
+
+        storage
+    }
+
+    // Storage Logistics
+    let mut operator_list: Vec<Operator<'genome>> = Vec::new();
+
+    // Perform operator search on each replicon, parse every find into an Operator struct, then store Operators in operator_list
+    for replicon in target_genome.genome.replicons.values() {
+        
+        // Append n basepairs (where n = chunk-length) from front of sequence
+        // to end to allow for searching over circular genome discontinuity, 
+        // then search for operators
+        let mut fwd_modified = replicon.fwd_strand.clone();
+        let fwd_wrap_around_extension = fwd_modified[0..chunk_len].to_string();
+        fwd_modified.push_str(&fwd_wrap_around_extension[..]);
+        let fwd_matches = locate_matching_subsequences(chunk_len, &permutations, fwd_modified, replicon.fwd_strand.len(), StrandSense::Forward);
+
+        // Repeat process for reverse strand
+        let mut rev_modified = replicon.rev_strand.clone();
+        let rev_wrap_around_extension = rev_modified[0..chunk_len].to_string();
+        rev_modified.push_str(&rev_wrap_around_extension[..]);
+        let rev_matches = locate_matching_subsequences(chunk_len, &permutations, rev_modified, replicon.rev_strand.len(), StrandSense::Reverse);
+
+        if let Some(finds) = fwd_matches {
+            let direction = StrandSense::Forward;
+            operator_list.append(&mut process_proto_operator_data(finds, direction, target_genome, replicon));
+        }
+
+        if let Some(finds) = rev_matches {
+            let direction = StrandSense::Reverse;
+            // Reverse order in which reverse strand operators are listed before appending
+            operator_list.append(&mut process_proto_operator_data(finds, direction, target_genome, replicon).into_iter().rev().collect());
+        }
+    }
+
+    // Mark any operators in the list as 'palindromic' if their start index appears more than once
+    let operator_start_indicies: Vec<usize> = operator_list.iter().map(|x| x.linear_location.start_bound).collect();
+    for operator in operator_list.iter_mut() {
+        let start_bound = operator.linear_location.start_bound;
+        let count = operator_start_indicies.iter().filter(|&n| *n == start_bound).count();
+        if count > 1 {
+            operator.palindromic = PalindromeStatus::Yes
+        }
+    }
+
+    // Remove any duplicate entries, defined as two operator who have the same forward strand start position
+    let mut indices_hash_map: HashMap<(usize, usize), Operator> = HashMap::new();
+    for operator in operator_list.into_iter().rev() { 
+        // Reverse ordering in order to process reverse strand operators first so
+        // that they get replaced preferentially by forward strand operators
+        let key = (operator.linear_location.start_bound, operator.linear_location.end_bound);
+        indices_hash_map.insert(key, operator);
+    }
+
+    // Sort operator list by start_index of the Operators
+    let mut operator_list: Vec<Operator> = indices_hash_map.into_values().collect();
+    operator_list.sort_by(|a,b| a.linear_location.start_bound.cmp(&b.linear_location.start_bound));
+
+    match operator_list.len() {
+        0 => target_genome.operators = None,
+        _ => target_genome.operators = Some(operator_list),
+    }
+}
+
+// Given a genome with genes and a BLAST table, updates all the genes in the genome 
+// instance to reflect whether each is associated with any known BLAST hits
+fn blast_link(genome: &mut SearchGenome) {
+
+    // Check if genome has associated blast hits; exit call if genome has no associated blasts
+    let blast_hits = match &genome.fragments {
+        Some(hits) => hits,
+        None => return,
+    };
+
+    // Check if genome has associated gene annotations; exit call if genome has no associated genes
+    let genes = match &mut genome.genes {
+        Some(genes) => genes,
+        None => return,
+    };
+
+    // Check the relationship every gene has with every known BLAST hit
+    for gene in genes {
+        for hit in blast_hits {
+            let gene_loc = &gene.linear_location;
+            let hit_loc = &hit.linear_location;
+            
+            // If a new match is found
+            if let SpatialRelationship::Overlap(_) = spatial_relationship(gene_loc, hit_loc) {
+
+                // If gene and blast hit are determined to overlap, either create a new storage vector
+                // for blast associations if one doesn't exist, or append new blast association to the
+                // existing list
+                gene.blast_association = match &mut gene.blast_association {
+                    None => {
+                        Some(vec![hit.blast])
+                    },
+                    Some(x) => {
+                        x.push(hit.blast);
+                        continue;
+                    }
+                }
+            }
         }
     }
 }
@@ -198,16 +524,13 @@ impl<'a> CircularGenomeLocation<'a> {
 // as the positioning of B relative to A
 #[allow(non_snake_case)]
 #[allow(unused_parens)]
-fn spatial_relationship<A,B>(element_A: &A, element_B: &B) -> SpatialRelationship 
-where A: GenomeLocate,
-      B: GenomeLocate
-{   
+fn spatial_relationship(location_A: &LinearGenomeLocation, location_B: &LinearGenomeLocation) -> SpatialRelationship {   
     // Storage logistics
     let output: SpatialRelationship;
 
     // Define circular genome location of each element
-    let A = element_A.locate();
-    let B = element_B.locate();
+    let A = CircularGenomeLocation::new(location_A);
+    let B = CircularGenomeLocation::new(location_B);
     let replicon_radius = (A.replicon.len as f64) / (2.0 * PI);
     // NOTE: replicon.len == circumference of the genome; 2*pi*radius = circumference
 
@@ -217,8 +540,8 @@ where A: GenomeLocate,
     // |AxB| < 0 => B is a 5' neighbor
     // For Fwd strand: CCW orientation == 5' -> 3'
     // For Fwd strand: CCW orientation == 3' -> 5'
-    let A_hat = A.position.normalize();
-    let B_hat = B.position.normalize();
+    let A_hat = A.center;
+    let B_hat = B.center;
     let orientation = match A.strand {
         StrandSense::Forward | StrandSense::Other => A_hat.cross(&B_hat),
         StrandSense::Reverse => -A_hat.cross(&B_hat),
@@ -229,8 +552,8 @@ where A: GenomeLocate,
     // genes without having to duplicate very similar code with only minor
     // changes accounting for strand-specific Left/Right determination
 
-    let A_radius = A.position.magnitude();
-    let B_radius = B.position.magnitude();
+    let A_radius = A.arc_length / 2.0;
+    let B_radius = B.arc_length / 2.0;
     
     // Define length of arc intervening between center of A and center of B
     let Δ_angle = A_hat.angle(&B_hat);            // Angle between centers of element A and B
@@ -254,9 +577,9 @@ where A: GenomeLocate,
         }
     } else if engulfing_overlap {
         if A_radius > B_radius {
-            SpatialRelationship::Overlap(OverlapType::ContainerOf)
-        } else {
             SpatialRelationship::Overlap(OverlapType::EngulfedBy)
+        } else {
+            SpatialRelationship::Overlap(OverlapType::ContainerOf)
         }
     } else {
         if orientation.is_sign_positive() {
@@ -269,40 +592,60 @@ where A: GenomeLocate,
     output
 }
 
-// Given a genome and all the sequence permutations of an (operator) consensus sequence,
-// locate all places in the genome where some variant of the consensus sequence is found.
-fn find_genome_operators(target_genome: &Genome, query: &SequencePermutations) -> Vec<Operator> {
-    unimplemented!()
+fn search_bubble<'genome, T: LocateOnLinearGenome>(query: &'genome T, search_radius: usize) -> LinearGenomeLocation {
+    let mut proto_bubble = query.get_linear_location().clone();
+    let start_i64: i64 = (proto_bubble.start_bound as i64) - (search_radius as i64);
+   
+    proto_bubble.start_bound = start_i64.rem_euclid(proto_bubble.replicon.len as i64) as usize;
+    proto_bubble.end_bound += search_radius;
+
+    proto_bubble
 }
 
 // Given a genomic element and a list of all other elements (to be considered) on that genome,
 // return a list of all genome elements within a distance 'search_radius' of the query's center
-fn find_nearby_elements<Q,S>(query: &Q, possible_elements: &S, search_radius: usize) -> Vec<S>
-where Q: GenomeLocate,
-      S: GenomeLocate + SearchBubble
+fn find_nearby_elements<'blast, 'genome, R>(query: &R, possible_elements: &'genome Vec<GenomeObject<'blast, 'genome>>, search_radius: usize)
+-> Option<Vec<(&'genome GenomeObject<'blast, 'genome>, SpatialRelationship)>>
+where R: LocateOnLinearGenome,
 {
-    unimplemented!()
+    // Storage logistics
+    let mut nearby_list: Vec<(&'genome GenomeObject, SpatialRelationship)> = Vec::new(); 
+
+    // Determine location of the query and its corresponding search bubble
+    let query_loc = query.get_linear_location();
+    let bubble_loc = search_bubble(query, search_radius);
+
+    for element in possible_elements {
+
+        // Pull the location of a given element
+        let element_loc = match element {
+            GenomeObject::Gene(gene) => gene.get_linear_location(),
+            GenomeObject::Operator(operator) => operator.get_linear_location(),
+            GenomeObject::Blast(blast) => blast.get_linear_location(),
+        };
+
+        // Perform relational search against the bubble, looking for elements overlapping the bubble
+        match spatial_relationship(&bubble_loc, element_loc) {
+
+            // We only care about the elements that overlap our search bubble in some way
+            SpatialRelationship::Overlap(_) => {
+                let relationship = spatial_relationship(query_loc, element_loc);
+                let find = (element, relationship);
+                nearby_list.push(find);
+            },
+            _ => continue, 
+            // We don't care if an element is neighboring the SEARCH BUBBLE; 
+            // we care ONLY about how it neighbors the query itself; we also don't
+            // care about elements that are on completely different replicons
+        }
+
+    }
+
+    match nearby_list.len() {
+        0 => None,
+        _ => Some(nearby_list),
+    }
 }
-
-// Given a gene and a BLAST table, update the gene to reflect whether it is associated
-// with any of the hits in the BLAST Table
-fn blast_link(input_gene: &mut Gene, blast_results: &genome::BlastHitsTable) {
-    unimplemented!()
-}
-
-trait GetLocation {
-    fn get_circ_location(&self) -> LinearGenomeLocation;
-}
-
-trait GenomeLocate: GetLocation {
-    fn locate(&self) -> CircularGenomeLocation;
-    fn locate_rev(&self) -> CircularGenomeLocation;
-}
-trait SearchBubble: GenomeLocate {}
-
-
-
-
 
 
 
@@ -316,6 +659,8 @@ trait SearchBubble: GenomeLocate {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cop_operon_specific::build_cop_permutation_table;
+    use crate::permutations::SequencePermutations;
     use crate::genome::{self, GenomeRegion, FeatureType};
     use crate::import::{self, ProtoGenome, AssemblyMetadata};
     use std::path::PathBuf;
@@ -633,13 +978,13 @@ mod tests {
             GenomeVector(x,y)
         };
 
-        let actual_cases = (0..=MAX_INDEX).map(|x| {
+        let matrix_transformation_calculated_cases = (0..=MAX_INDEX).map(|x| {
                                         let theta = 2.0*PI*(x as f64 / REPLICON_SIZE as f64);
                                         let x_hat = GenomeVector(1.0, 0.0);
                                         rotate_vector(theta, x_hat)
                                     });
 
-        for (index, (left, right)) in actual_cases.zip(test_cases).enumerate() {
+        for (index, (left, right)) in matrix_transformation_calculated_cases.zip(test_cases).enumerate() {
             let difference = (&left - &right).magnitude();
             let delta = 1e-4;
             assert!(delta > difference);
@@ -648,9 +993,9 @@ mod tests {
 
     #[test]
     #[allow(non_snake_case)]
-    fn genome_arc_delta_test_1bp_arc_100Mbp_genome() {
+    fn genome_arc_delta_test_1bp_arc_50Mbp_genome() {
 
-        const REPLICON_SIZE: usize = 100_000_000;
+        const REPLICON_SIZE: usize = 50_000_000;
 
         // Calculate unit arcs (1bp) for every base-pair position in the genome
         let mut list_of_arc_lengths: Vec<f64> = Vec::new();
@@ -674,7 +1019,7 @@ mod tests {
         }
 
         println!("MAXIMUM deviation for 1bp arc in {}bp genome = {}", REPLICON_SIZE, max_deviation);
-        assert!(max_deviation < 0.1);
+        assert!(max_deviation < 1e-6);
     }
 
     #[test]
@@ -705,7 +1050,7 @@ mod tests {
         }
 
         println!("MAXIMUM deviation for 1bp arc in {}bp genome = {}", REPLICON_SIZE, max_deviation);
-        assert!(max_deviation < 5e-3);
+        assert!(max_deviation < 1e-6);
     }
 
     #[test]
@@ -784,7 +1129,7 @@ mod tests {
     fn genome_arc_delta_test_varying_arc_100Mbp_genome() {
 
         const REPLICON_SIZE: usize = 100_000_000;
-        let arc_length_samples = [1, 2, 3, 10, 25];
+        let arc_length_samples = [1, 2, 3, 10, 25, 100_000, 1_000_000, 10_000_000];
 
         let mut list_of_max_deviations: Vec<f64> = Vec::new();
         for arc_len in arc_length_samples  {
@@ -795,7 +1140,7 @@ mod tests {
 
             for i in 0..=REPLICON_SIZE+1 {
                 let lower_bound = GenomeVector::new(i, REPLICON_SIZE);
-                let upper_bound = GenomeVector::new(i+1, REPLICON_SIZE);
+                let upper_bound = GenomeVector::new(i+arc_len, REPLICON_SIZE);
                 let seperating_angle = lower_bound.angle(&upper_bound);
                 let radius = (REPLICON_SIZE as f64) / (2.0 * PI);
                 let arc_length = seperating_angle * radius;
@@ -804,7 +1149,7 @@ mod tests {
                 list_of_indicies.push(i);
             }
 
-            let delta_list = list_of_arc_lengths.iter().map(|x| (x - 1.0).abs());
+            let delta_list = list_of_arc_lengths.iter().map(|x| (x - arc_len as f64).abs());
             let mut max = 0_f64;
             let mut max_index = 0;
             let mut min = f64::INFINITY;
@@ -833,8 +1178,8 @@ mod tests {
             }
         }
 
-        println!("MAXIMUM deviation for 1bp arc in {}bp genome across various sequence lengths {:?} = {}", REPLICON_SIZE, arc_length_samples, max_deviation);
-        assert!(max_deviation < 0.1);
+        println!("MAXIMUM deviation for various arc lengths  {:?} in {}bp genome across = {}", arc_length_samples, REPLICON_SIZE, max_deviation);
+        assert!(max_deviation < 1e-6);
     }
 
     #[test]
@@ -879,50 +1224,289 @@ mod tests {
         }
 
         println!("MAXIMUM deviation for 1bp arc in {}bp genome = {}", REPLICON_SIZE, max_deviation);
-        assert!(max_deviation < 5e-3);
+        assert!(max_deviation < 1e-6);
     }
 
     // Several of the following tests require a test Genome to work with, so this performs that import operation
-    fn import_tigr4_genome() -> Genome {
+    fn import_tigr4_lacto_genome() -> (Genome, Genome) {
 
-        // Paths to relevant files
+        // TIGR4
+        // Paths to relevant files to TIGR4
         let assembly_name = "GCF_000006885.1_ASM688v1".to_string();
         let genome_seq_file = PathBuf::from("tests/test_assets/GCF_000006885.1_ASM688v1/GCF_000006885.1_ASM688v1_genomic.fna");
         let genome_annotation_file = PathBuf::from("tests/test_assets/GCF_000006885.1_ASM688v1/GCF_000006885.1_ASM688v1_genomic.gff");
         let refseq_metadata_file = PathBuf::from("tests/test_assets/assembly_summary_refseq.txt");
         let genbank_metadata_file = PathBuf::from("tests/test_assets/assembly_summary_genbank.txt");
 
-        // Import data
+        // Import data relevant to TIGR4
         let protogenome = import::parse_genome_sequence(&assembly_name, genome_seq_file);
         let protogenes = import::parse_genome_annotation(genome_annotation_file);
         let refseq_meta = import::import_database_summary(refseq_metadata_file).into_iter();
         let genbank_meta = import::import_database_summary(genbank_metadata_file).into_iter();
         let full_metadata: HashMap<String, AssemblyMetadata> = refseq_meta.chain(genbank_meta).collect();
 
-        // Build genome
+        // Build TIGR4 genome
         let asm_pull_error = "ERROR: could not find assembly name in metadata database!";
         let metadata = full_metadata.get(&assembly_name).expect(asm_pull_error);
         let genes = Some(genome::Gene::convert_annotation_entry_list(&protogenes));
-        
-        genome::Genome::from_proto(protogenome, metadata, genes)
+        let t4 = genome::Genome::from_proto(protogenome, metadata, genes);
+
+        // LACTO
+        // Paths to relevant files to lacto
+        let assembly_name = "GCF_000006865.1_ASM686v1".to_string();
+        let genome_seq_file = PathBuf::from("tests/test_assets/GCF_000006865.1_ASM686v1/GCF_000006865.1_ASM686v1_genomic.fna");
+        let genome_annotation_file = PathBuf::from("tests/test_assets/GCF_000006865.1_ASM686v1/GCF_000006865.1_ASM686v1_genomic.gff");
+
+        // Import data relevant to lacto
+        let protogenome = import::parse_genome_sequence(&assembly_name, genome_seq_file);
+        let protogenes = import::parse_genome_annotation(genome_annotation_file);
+
+        // Build lacto genome
+        let asm_pull_error = "ERROR: could not find assembly name in metadata database!";
+        let metadata = full_metadata.get(&assembly_name).expect(asm_pull_error);
+        let genes = Some(genome::Gene::convert_annotation_entry_list(&protogenes));
+        let lacto = genome::Genome::from_proto(protogenome, metadata, genes);
+
+        (t4, lacto)
     }
 
     #[test]
     #[allow(non_snake_case)]
-    fn derive_circular_genome_from_linear_1() {
+    fn derive_circular_genome_from_linear() {
 
-        let TIGR4 = import_tigr4_genome();
-        let mut test_genes = TIGR4.genes.clone().unwrap();
-        let test_genes = [test_genes.remove(0), test_genes.remove(2), test_genes.remove(1212), test_genes.remove(4078)];
+        let imported_genomes = import_tigr4_lacto_genome();
+
+        let TIGR4 = imported_genomes.0;
+        let test_genes = TIGR4.genes.clone().unwrap();
+        let test_genes = [test_genes[0].clone(), test_genes[2].clone(), test_genes[1212].clone(), test_genes[4078].clone()];
+        let mut test_locs: Vec<CircularGenomeLocation> = Vec::with_capacity(test_genes.len());
 
         for test_gene in &test_genes {
-            let linear_location = LinearGenomeLocation::new(&test_gene.location);
-            let circ_location = CircularGenomeLocation::new(&linear_location, &TIGR4);
-            
-            println!("{:?}", linear_location);
-            println!("{}\n", circ_location);
+            let linear_location = LinearGenomeLocation::new(&test_gene.location, &TIGR4);
+            let circ_location = CircularGenomeLocation::new(&linear_location);
+            test_locs.push(circ_location);
         }
 
+        let circ_loc_1 = CircularGenomeLocation {
+            replicon: TIGR4.replicons.get("NC_003028.3").unwrap(),
+            strand: StrandSense::Forward,
+            start_unit_vec: GenomeVector(1.0, 0.0),
+            end_unit_vec: GenomeVector(1.0, 0.0),
+            center: GenomeVector(-1.0, 0.0),
+            arc_length: 2160842.0,
+        };
+        let circ_loc_2 = CircularGenomeLocation {
+            replicon: TIGR4.replicons.get("NC_003028.3").unwrap(),
+            strand: StrandSense::Forward,
+            start_unit_vec: GenomeVector::new(196, 2160842),
+            end_unit_vec: GenomeVector::new(1558, 2160842),
+            center: GenomeVector::new(877, 2160842),
+            arc_length: 1362.0,
+        };
+        let circ_loc_3 = CircularGenomeLocation {
+            replicon: TIGR4.replicons.get("NC_003028.3").unwrap(),
+            strand: StrandSense::Forward,
+            start_unit_vec: GenomeVector::new(603894, 2160842),
+            end_unit_vec: GenomeVector::new(610317, 2160842),
+            center: GenomeVector::new_arbritary((610317 + 603894) as f64 / 2.0, 2160842),
+            arc_length: (610317 - 603894) as f64,
+        };
+        let circ_loc_4 = CircularGenomeLocation {
+            replicon: TIGR4.replicons.get("NC_003028.3").unwrap(),
+            strand: StrandSense::Reverse,
+            start_unit_vec: GenomeVector::new(1970326, 2160842),
+            end_unit_vec: GenomeVector::new(1970400, 2160842),
+            center: GenomeVector::new_arbritary((1970400 + 1970326) as f64 / 2.0, 2160842),
+            arc_length: (1970400 - 1970326) as f64,
+        };
+        let actual_values = [circ_loc_1, circ_loc_2, circ_loc_3, circ_loc_4];
+
+        for (left, right) in actual_values.iter().zip(test_locs.iter()) {
+            left.test_compare(right);
+        }
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test_operator_search_1() {
+
+        // CopY Operators
+        let (operator_seq, table) = build_cop_permutation_table();
+        let operators = SequencePermutations::new("Cop Operator".to_string(), operator_seq, table);
+        let imported_genomes = import_tigr4_lacto_genome();
+        
+        // TIGR4
+        let TIGR4 = imported_genomes.0;
+        let TIGR4_search = SearchGenome::new(&TIGR4, &operators);
+
+        // T4 PRINTING
+        for (index, op) in TIGR4_search.operators.clone().unwrap().iter().enumerate() {
+            println!("[{}]\t{:?}\t{}\t\t5'-{}-3'\t{}:{}", index, op.palindromic, op.linear_location.strand, op.seq, op.linear_location.start_bound+1, op.linear_location.end_bound);
+        }
+
+        // TIGR4 Known Values
+        let mut known_operators: Vec<Operator> = Vec::new();
+        let palindrome_statuses =   [0,0,1,1,1,1,1,0,0,1,1,0,1,0,1];
+        let strand_statuses =       [1,0,1,1,1,1,1,1,1,1,1,1,1,1,1];
+        let sequences = [
+            "GACTACACTCGTAAGT",
+            "ATTGACAACCGTAATC",
+            "AGTGACAACTGTCATT",
+            "GATTACAGGTGTCAAT",
+            "ATTGACAAATGTAGAT",
+            "ATTGACAAATGTAGAT",
+            "GATTACATCTGTCAGC",
+            "GTCTACAGGCGTAGTT",
+            "GGCTACAATCGTAATT",
+            "AGTGACACCTGTCGTC",
+            "ATTGACATTTGTAACT",
+            "AATGACATCCGTCATT",
+            "AACTACAGGTGTAAAC",
+            "AACGACAAGCGTCACC",
+            "GGCTACATCTGTAAAT",
+        ];
+        let starts = [
+            70530,
+            444016,
+            549370,
+            568177,
+            691554,
+            691594,
+            775948,
+            918522,
+            1022871,
+            1153103,
+            1692084,
+            1728688,
+            1746226,
+            1775201,
+            2123135,
+        ];
+        
+        for (((seq, palin), strand), start) in sequences.iter()
+                              .zip(palindrome_statuses.iter())
+                              .zip(strand_statuses.iter()) 
+                              .zip(starts.iter()) {
+            
+            let new_region = GenomeRegion {
+                replicon_accession: "NC_003028.3".to_string(),
+                replicon_strand: match strand {
+                    0 => StrandSense::Reverse,
+                    _ => StrandSense::Forward,
+                },
+                start_index_ord: *start as usize,
+                end_index_ord: start + 15,
+            };
+            
+            let new_op = Operator {
+                linear_location: LinearGenomeLocation::new(&new_region, &TIGR4),
+                seq: seq.to_string(),
+                palindromic: match palin {
+                    0 => PalindromeStatus::No,
+                    _ => PalindromeStatus::Yes,
+                },
+            };
+
+            known_operators.push(new_op);
+        }
+
+        // TIGR4 Test Values
+        let test_operators = match &TIGR4_search.operators {
+            Some(operators) => {
+                operators
+            },
+            None => panic!("No operators."),
+        };
+
+        assert_eq!(known_operators, *test_operators);
+
+
+        // LACTO PRINTING
+        println!();
+        let lacto = imported_genomes.1;
+        let lacto_search = SearchGenome::new(&lacto, &operators);
+        for (index, op) in lacto_search.operators.unwrap().iter().enumerate() {
+            println!("[{}]\t{:?}\t{}\t\t5'-{}-3'\t{}:{}", index+1, op.palindromic, op.linear_location.strand, op.seq, op.linear_location.start_bound+1, op.linear_location.end_bound);
+        }
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn test_operator_search_2() {
+
+    }
+
+
+
+
+
+
+
+
+
+    // HELPER FUNCTIONS
+    impl GenomeVector {
+        
+        // calculates a genome vector pointing to the center of two bounds 
+        fn new_arbritary(bound: f64, replicon_size: usize) -> GenomeVector {
+
+            let start = bound % replicon_size as f64;
+            let theta = (2.0 * PI * start) / (replicon_size as f64);
+
+            let x = theta.cos();
+            let y = theta.sin();
+
+            GenomeVector(x, y)
+        }
+    }
+
+    impl<'a> CircularGenomeLocation<'a> {
+        fn test_compare(&self, other: &Self) {
+
+            const DELTA: f64 = 1e-9;
+
+            if self.replicon != other.replicon {
+                println!("Left: {}\nRight: {}\n", self.replicon.accession_id, other.replicon.accession_id);
+                panic!("Genome Locations are not on the same replicon!\n");
+            } else {
+                println!("Replicons are identical.")
+            }
+
+            if self.strand != other.strand {
+                println!("Left: {}\nRight: {}\n", self.strand, other.strand);
+                panic!("Genome Locations are not on the same strand!")
+            } else {
+                println!("Strands are identical.")
+            }
+
+            if (&self.start_unit_vec - &other.start_unit_vec).magnitude() > DELTA {
+                println!("Left: {}\nRight: {}\n", self.start_unit_vec, other.start_unit_vec);
+                panic!("Genome Locations do not have the same START vector!")
+            } else {
+                println!("Start unit vectors are within a distance of {}", DELTA)
+            }
+
+            if (&self.end_unit_vec - &other.end_unit_vec).magnitude() > DELTA {
+                println!("Left: {}\nRight: {}\n", self.end_unit_vec, other.end_unit_vec);
+                panic!("Genome Locations do not have the same END vector!")
+            } else {
+                println!("Start end vectors are within a distance of {}", DELTA)
+            }
+
+            if (&self.center - &other.center).magnitude() > DELTA {
+                println!("Left: {}\nRight: {}\n", self.center, other.center);
+                panic!("Genome Locations do not have the same CENTER vector!")
+            } else {
+                println!("Center vectors are within a distance of {}", DELTA)
+            }
+
+            if (self.arc_length - other.arc_length) > DELTA {
+                println!("Left: {}\nRight: {}\n", self.arc_length, other.arc_length);
+                panic!("Genome Locations do not have the same arc lengths!")
+            } else {
+                println!("Arc lengths differ by less than {}", DELTA)
+            }
+        }
     }
 
     use std::fmt::Display;
@@ -931,13 +1515,26 @@ mod tests {
 
             let theta_1 = GenomeVector(1.0, 0.0).angle(&self.start_unit_vec).to_degrees();
             let theta_2 = GenomeVector(1.0, 0.0).angle(&self.end_unit_vec).to_degrees();
-            let theta_3 = GenomeVector(1.0, 0.0).angle(&self.position).to_degrees();
+            let theta_3 = GenomeVector(1.0, 0.0).angle(&self.center).to_degrees();
 
-            write!(f, "Strand: {:.15}\nReplicon Size: {}bp\nArc Length: {:.2}bp\nStart:\t{:.15} (θ₁ = {:.5}°)\n\
-                       End:\t{:.15} (θ₂ = {:.5}°)\nCenter:\t{:.15} (θ₃ = {:.5}°)", 
-                       self.strand, self.replicon.len, self.position.magnitude(), self.start_unit_vec,
-                       theta_1, self.end_unit_vec, theta_2, self.position, theta_3)
+            write!(f, "Circular Location\nReplicon: {}\nStrand: {:.15}\nReplicon Size: {}bp\nArc Length: {:.6}bp\nStart:\t{:.15} (θ₁ = {:.5}°)\n\
+                       End:\t{:.15} (θ₂ = {:.5}°)\nCenter:\t{:.15} (θ₃ = {:.5}°)\n", 
+                       self.replicon.accession_id, self.strand, self.replicon.len, self.arc_length, self.start_unit_vec,
+                       theta_1, self.end_unit_vec, theta_2, self.center, theta_3)
         }    
+    }
+
+    impl Display for LinearGenomeLocation<'_> {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            let strand = &self.strand;
+            let parent_id = &self.replicon.accession_id;
+            let start = self.start_bound;
+            let end = self.end_bound;
+            let element_len = (end as i64 - start as i64).abs();
+
+            write!(f, "Linear Location\nReplicon: {}\nStrand: {}\nStart Bound: {}\nEnd Bound: {}\nFeature Length: {}\n",
+                    parent_id, strand, start, end, element_len)
+        }
     }
 
     impl Display for StrandSense {

@@ -1,0 +1,27 @@
+# Assembly name:  ASM686v1
+# Organism name:  Lactococcus lactis subsp. lactis Il1403 (firmicutes)
+# Infraspecific name:  strain=IL1403
+# Taxid:          272623
+# BioSample:      SAMN02603339
+# BioProject:     PRJNA72
+# Submitter:      INRA
+# Date:           2001-03-21
+# Assembly type:  na
+# Release type:   major
+# Assembly level: Complete Genome
+# Genome representation: full
+# GenBank assembly accession: GCA_000006865.1
+# RefSeq assembly accession: GCF_000006865.1
+# RefSeq assembly and GenBank assemblies identical: yes
+#
+## Assembly-Units:
+## GenBank Unit Accession	RefSeq Unit Accession	Assembly-Unit name
+## GCA_000006875.1	GCF_000006875.1	Primary Assembly
+#
+# Ordered by chromosome/plasmid; the chromosomes/plasmids are followed by
+# unlocalized scaffolds.
+# Unplaced scaffolds are listed at the end.
+# RefSeq is equal or derived from GenBank object.
+#
+# Sequence-Name	Sequence-Role	Assigned-Molecule	Assigned-Molecule-Location/Type	GenBank-Accn	Relationship	RefSeq-Accn	Assembly-Unit	Sequence-Length	UCSC-style-name
+ANONYMOUS	assembled-molecule	na	Chromosome	AE005176.1	=	NC_002662.1	Primary Assembly	2365589	na
