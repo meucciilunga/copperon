@@ -1,14 +1,12 @@
 #![allow(dead_code)]
-#![allow(unused_imports)]
-#![allow(unused_variables)]
+//#![allow(unused_imports)]
 
-use crate::genome::{self, Gene, Genome, GenomeRegion, StrandSense, BlastFragment, Replicon, GetSequence, ReverseComplement, BlastHitsTable};
+use crate::genome::{self, Gene, Genome, GenomeRegion, StrandSense, BlastFragment,
+                    Replicon, BlastHitsTable};
 use crate::permutations::SequencePermutations;
 use std::f64::consts::PI;
-use std::ops::{Add, Sub, Index};
+use std::ops::{Add, Sub};
 use std::collections::{HashSet, HashMap};
-use std::time::{Duration, SystemTime};
-use std::thread::sleep;
 
 #[derive(Debug, Clone, PartialEq)]
 enum SpatialRelationship {
@@ -353,7 +351,7 @@ impl<'genome, 'blast, 'seq> SearchGenome<'genome, 'blast> {
         blast_results_linker(&mut proto_search_genome);
 
         // Search genome for operators
-        let operators = find_genome_operators(&mut proto_search_genome, permutations);
+        find_genome_operators(&mut proto_search_genome, permutations);
 
         proto_search_genome
     }
@@ -446,7 +444,7 @@ fn find_genome_operators<'genome>(target_genome: &mut SearchGenome<'genome, '_>,
             // Check if subject-derived 'word' (16-mer chunk) is in the database of known permutations 
             let valid = queries.get(&subject_seq[start..end]);
 
-            let find = match valid {
+            match valid {
                 Some(&seq) => {
                     let mut ord_start = start_bound_index + 1;
                     let mut ord_end = ord_start + chunk_len - 1;
@@ -488,9 +486,6 @@ fn find_genome_operators<'genome>(target_genome: &mut SearchGenome<'genome, '_>,
                 start_index_ord: proto_operator.1.0,
                 end_index_ord: proto_operator.1.1,
             };
-
-            let fwd_seq = proto_operator.0.clone();
-            let rev_seq = proto_operator.0.chars().rev().collect::<String>();
             
             let new_operator = Operator {
                 linear_location: LinearGenomeLocation::new(&tmp_genome_region, parent_genome.genome),
@@ -571,8 +566,6 @@ fn find_genome_operators<'genome>(target_genome: &mut SearchGenome<'genome, '_>,
 #[allow(non_snake_case)]
 #[allow(unused_parens)]
 fn spatial_relationship(location_A: &LinearGenomeLocation, location_B: &LinearGenomeLocation) -> SpatialRelationship {   
-    // Storage logistics
-    let output: SpatialRelationship;
 
     // Define circular genome location of each element
     let A = CircularGenomeLocation::new(location_A);
@@ -750,7 +743,7 @@ mod tests {
     use crate::cop_operon_specific::build_cop_permutation_table;
     use crate::permutations::SequencePermutations;
     use crate::genome::{self, GenomeRegion, FeatureType};
-    use crate::import::{self, ProtoGenome, AssemblyMetadata};
+    use crate::import::{self, AssemblyMetadata};
     use std::path::PathBuf;
     use std::{collections::HashMap, f64::consts::E};
 
@@ -1072,7 +1065,7 @@ mod tests {
                                         rotate_vector(theta, x_hat)
                                     });
 
-        for (index, (left, right)) in matrix_transformation_calculated_cases.zip(test_cases).enumerate() {
+        for (left, right) in matrix_transformation_calculated_cases.zip(test_cases) {
             let difference = (&left - &right).magnitude();
             let delta = 1e-4;
             assert!(delta > difference);
@@ -1429,10 +1422,6 @@ mod tests {
         let (operator_seq, table) = build_cop_permutation_table();
         let operators = SequencePermutations::new("Cop Operator".to_string(), operator_seq, table);
         let imported_genomes = import_tigr4_lacto_genome();
-
-        // Load BLAST hits
-        let blast_file = PathBuf::from("tests/test_assets/CopY_blast_result.txt");
-        let blast_table = genome::BlastHitsTable::build_table_from_file(genome::BlastAssociationType::CopY, blast_file);
         
         // TIGR4
         let TIGR4 = imported_genomes.0;
@@ -1744,10 +1733,8 @@ mod tests {
 
 
 
-    use std::time::Duration; 
     use std::time::SystemTime;
-    use std::thread;
-
+    
     #[test]
     #[allow(non_snake_case)]
     fn timing_diagnostic_and_BLAST_linker_test() {

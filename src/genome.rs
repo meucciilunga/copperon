@@ -1,5 +1,4 @@
 #![allow(dead_code)]
-#![allow(unused_imports)]
 
 use crate::import::{self, ProtoGenome, AssemblyMetadata, ProtoReplicon,
                     ProtoRepliconType, AnnotationEntry, BlastDerivedAnnotation};
