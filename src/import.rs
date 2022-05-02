@@ -276,7 +276,7 @@ pub struct AnnotationEntry {
     pub source_database:    String,
     pub feature_type:       String,
     pub start_index_ord:    usize,
-    pub end_index_ord:     usize,
+    pub end_index_ord:      usize,
     pub replicon_strand:    char,
     pub attributes:         HashMap<String, String>,
 }

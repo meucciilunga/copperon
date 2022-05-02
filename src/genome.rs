@@ -1,9 +1,9 @@
 #![allow(dead_code)]
 #![allow(unused_imports)]
 
-use crate::import::{ProtoGenome, AssemblyMetadata, ProtoReplicon, 
+use crate::import::{self, ProtoGenome, AssemblyMetadata, ProtoReplicon,
                     ProtoRepliconType, AnnotationEntry, BlastDerivedAnnotation};
-use std::collections::{HashMap, HashSet};
+use std::{collections::{HashMap, HashSet}, path::PathBuf};
 
 pub trait GetSequence {
     fn get_sequence(&self) -> String;
@@ -120,9 +120,18 @@ impl BlastFragment {
     }
 }
 
+// Specific to Cop-Operon Analyses
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub enum BlastAssociationType {
+    CopA,
+    CupA,
+    CopY,
+    CopZ,
+}
+
 // Wrapper for accessing BLAST annotation data via genome accession id
 pub struct BlastHitsTable {
-    pub name: String,
+    pub association: BlastAssociationType,
     pub table: HashMap<String, Vec<BlastFragment>>,
     // The HashMap links every genome (via its accession id) to all known
     // BLAST hits found within that genome for a given BLAST search; the
@@ -132,10 +141,20 @@ pub struct BlastHitsTable {
 
 impl BlastHitsTable {
 
+    pub fn build_table_from_file(association: BlastAssociationType, blast_results_file: PathBuf) -> BlastHitsTable {
+        
+        let annotations = import::parse_annotations_from_blast_results(blast_results_file).iter()
+                                                                                          .map(|x| BlastFragment::new(x))
+                                                                                          .collect::<Vec<BlastFragment>>();
+        
+        BlastHitsTable::new(association, annotations)
+    }
+
+
     // Turns a vector of parsed BLAST Fragments into a table containing
     // the BLAST Fragments linked to (and accessible by) their corresponding 
     // genome accession id
-    pub fn new(table_name: String, input_blast_results: Vec<BlastFragment>) -> BlastHitsTable {
+    fn new(association: BlastAssociationType, input_blast_results: Vec<BlastFragment>) -> BlastHitsTable {
         
         let results_table = {
 
@@ -168,7 +187,7 @@ impl BlastHitsTable {
         };
 
         BlastHitsTable {
-            name: table_name,
+            association,
             table: results_table,
         }
     }
@@ -425,10 +444,7 @@ mod tests {
         
         // Parse BLAST results file
         let test_blast_results_file = PathBuf::from("tests/test_assets/CopA_blast_result.txt");
-        let test_annotations = import::parse_annotations_from_blast_results(test_blast_results_file).iter()
-                                                                                                    .map(|x| BlastFragment::new(x))
-                                                                                                    .collect::<Vec<BlastFragment>>();
-        let test_blast_table = BlastHitsTable::new("CopA".to_string(), test_annotations);
+        let test_blast_table = BlastHitsTable::build_table_from_file(BlastAssociationType::CopA, test_blast_results_file);
 
         // Test that we have the expected number of keys for CopA; value for 
         // correct answer was derived from Python Script whose source code
@@ -506,7 +522,7 @@ mod tests {
         let test_annotations = import::parse_annotations_from_blast_results(test_blast_results_file).iter()
                                                                                                     .map(|x| BlastFragment::new(x))
                                                                                                     .collect::<Vec<BlastFragment>>();
-        let test_blast_table = BlastHitsTable::new("CopY".to_string(), test_annotations);
+        let test_blast_table = BlastHitsTable::new(BlastAssociationType::CopY, test_annotations);
         
         // Test that we have the expected number of keys for CopY; value for 
         // correct answer was derived from Python Script whose source code

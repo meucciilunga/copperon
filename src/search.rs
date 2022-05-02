@@ -2,23 +2,28 @@
 #![allow(unused_imports)]
 #![allow(unused_variables)]
 
-use crate::genome::{self, Gene, Genome, GenomeRegion, StrandSense, BlastFragment, Replicon, GetSequence, ReverseComplement};
+use crate::genome::{self, Gene, Genome, GenomeRegion, StrandSense, BlastFragment, Replicon, GetSequence, ReverseComplement, BlastHitsTable};
 use crate::permutations::SequencePermutations;
 use std::f64::consts::PI;
 use std::ops::{Add, Sub, Index};
 use std::collections::{HashSet, HashMap};
+use std::time::{Duration, SystemTime};
+use std::thread::sleep;
 
+#[derive(Debug, Clone, PartialEq)]
 enum SpatialRelationship {
     Neighbor(NeighborType),
     Overlap(OverlapType),
     None,
 }
 
+#[derive(Debug, Clone, PartialEq)]
 enum NeighborType {
     FivePrime(usize),
     ThreePrime(usize),
 }
 
+#[derive(Debug, Clone, PartialEq)]
 enum OverlapType {
     FivePrimeBoundary,
     ThreePrimeBoundary,
@@ -27,7 +32,7 @@ enum OverlapType {
 }
 
 enum GenomeObject<'blast, 'genome> {
-    Gene(SearchGene<'blast, 'genome>),
+    Gene(SearchGene<'genome>),
     Operator(Operator<'genome>),
     Blast(SearchBlastFragment<'blast, 'genome>),
 }
@@ -205,15 +210,25 @@ impl<'genome> CircularGenomeLocation<'genome> {
         let replicon_len = replicon.fwd_strand.len();
         let replicon_radius = (replicon_len as f64) / (2.0 * PI);
         let strand = input.strand.clone();
+        let input_element_len = (input.end_bound as i64 - input.start_bound as i64).abs();
 
         // Circular positioning logistics
         let start_unit_vec = GenomeVector::new(input.start_bound, replicon_len);
         let end_unit_vec = GenomeVector::new(input.end_bound, replicon_len);
-        let arc_orientation = start_unit_vec.cross(&end_unit_vec);
+        let arc_orientation = (replicon_len as f64 / 2.0) - (input_element_len as f64);
         let center_unit_vec: GenomeVector;
         let arc_length: f64;
 
-        // Arc length and center vector depend on the spatial orientation b/w the bounding start- and end-vectors
+        // The calculated arc-length and the exact center vector depend on the spatial orientation b/w the bounding start-
+        // and end-vectors of a given element. To determine this relationship, we use the length of the feature derived from
+        // its linear genome location; if the feature is longer than half the replicon, we use the larger angle between
+        // its vectors; if the feature is shorter than half the replicon, we use the shorter angle between the features.
+        // This approach is slightly better than using the cross_pdt as the determinant of orientation as it is agnostic
+        // of which bound is listed as the start bound, and which bound is listed as the end bound. NCBI derived blast data,
+        // for elements sitting on the reverse strand, often lists end_ord_indicies that are LESS than start_ord_indices.
+        // In the cross product scheme, this meant to take the LARGER arc between the two vectors, even if the gene feature
+        // being referenced was really along the smaller one--a result we obviously don't want. This new orientation scheme 
+        // where start and end vectors are determined by the length of the feature addresses this shortcoming.
         if arc_orientation > 0.0 {
             center_unit_vec = (&start_unit_vec + &end_unit_vec).normalize();
             arc_length = start_unit_vec.angle(&end_unit_vec) * replicon_radius;
@@ -245,14 +260,15 @@ impl<'genome> CircularGenomeLocation<'genome> {
 // of LocateOnLinearGenome trait
 struct SearchGenome<'genome, 'blast> {
     genome:     &'genome Genome,
-    genes:      Option<Vec<SearchGene<'blast, 'genome>>>,
+    genes:      Option<Vec<SearchGene<'genome>>>,
     operators:  Option<Vec<Operator<'genome>>>,
     fragments:  Option<Vec<SearchBlastFragment<'blast, 'genome>>>
 }
 
 impl<'genome, 'blast, 'seq> SearchGenome<'genome, 'blast> {
-    fn new(genome: &'genome Genome, permutations: &'seq SequencePermutations) -> SearchGenome<'genome, 'blast> {
+    fn new(genome: &'genome Genome, permutations: &'seq SequencePermutations, blast_tables: Option<&'blast Vec<BlastHitsTable>>) -> SearchGenome<'genome, 'blast> {
         
+        // If genome has gene annotation data available...
         let genes = match &genome.genes {
             Some(genes) => {
                 let mut list_of_searchable_genes: Vec<SearchGene> = Vec::with_capacity(genes.len());
@@ -268,32 +284,91 @@ impl<'genome, 'blast, 'seq> SearchGenome<'genome, 'blast> {
 
                 Some(list_of_searchable_genes)
             }
-
             None => None,
         };
 
+        // If BLAST result tables have been provided...
+        let fragments = if let Some(tables) = blast_tables {
+
+            let mut genome_proto_fragments: Vec<(&BlastFragment, genome::BlastAssociationType)> = Vec::new();
+            let replicon_ids: Vec<String> = genome.replicons.keys().map(|x| x.clone()).collect();
+
+            // Check each table to see if it contains a list of fragments for a given replicon
+            // in the genome; repeat this process for every replicons in the genome
+            for id in replicon_ids.iter() {
+                for table in tables.iter() {
+                    match table.table.get(id) {
+                        Some(list_of_fragments) => {
+                            // Collect (references to) all blast fragments relevant to this particular
+                            // replicon paired with the type of BLAST search they came from
+                            let mut tmp = list_of_fragments.into_iter()
+                                                           .map(|x| (x, table.association.clone()))
+                                                           .collect::<Vec<(&BlastFragment, genome::BlastAssociationType)>>();
+                            genome_proto_fragments.append(&mut tmp);
+                        },
+                        None => continue,
+                    }
+                }
+            }
+
+            // Convert the protofragments into a list of SearchBlastFragments
+            match genome_proto_fragments.len() {
+                0 => None,
+                _ => {
+
+                    let mut storage: Vec<SearchBlastFragment> = Vec::new();
+
+                    for proto_fragment in genome_proto_fragments.iter() {
+                        
+                        let region = &proto_fragment.0.location;
+                        let linear_location = LinearGenomeLocation::new(region, genome);
+                        let blast_type = proto_fragment.1.clone();
+
+                        let new_fragment = SearchBlastFragment {
+                            blast: proto_fragment.0,
+                            linear_location,
+                            blast_type,
+                        };
+
+                        storage.push(new_fragment);
+                    }
+
+                    Some(storage)
+                }
+            }
+
+        } else {
+            None
+        };
+
+        // Assemble enough of genome to complete BLAST linking
         let mut proto_search_genome = SearchGenome {
             genome,
             genes,
+            fragments,
             operators: None,
-            fragments: None,
         };
 
+        // Link BLAST results to genes
+        blast_results_linker(&mut proto_search_genome);
+
+        // Search genome for operators
         let operators = find_genome_operators(&mut proto_search_genome, permutations);
 
         proto_search_genome
     }
 }
 
-struct SearchGene<'blast, 'genome> {
+struct SearchGene<'genome> {
     gene: &'genome Gene,
     linear_location: LinearGenomeLocation<'genome>,
-    blast_association: Option<Vec<&'blast BlastFragment>>,
+    blast_association: Option<HashSet<genome::BlastAssociationType>>,
 }
 
 struct SearchBlastFragment<'blast, 'genome> {
     blast: &'blast BlastFragment,
     linear_location: LinearGenomeLocation<'genome>,
+    blast_type: genome::BlastAssociationType,
 }
 
 // Operator Data Structre + Related Methods
@@ -317,7 +392,7 @@ trait LocateOnLinearGenome {
     fn get_linear_location(&self) -> &LinearGenomeLocation;
 }
 
-impl<'gene, 'blast, 'genome> LocateOnLinearGenome for SearchGene<'blast, 'genome> {
+impl<'genome> LocateOnLinearGenome for SearchGene<'genome> {
     fn get_linear_location(&self) -> &LinearGenomeLocation {
         &self.linear_location
     }
@@ -334,6 +409,19 @@ impl<'blast, 'genome> LocateOnLinearGenome for SearchBlastFragment<'blast, 'geno
         &self.linear_location
     }
 }
+
+/* How object 'self' is related to a given origin; turns spatial relationship into a method call on objects
+trait Relationship: LocateOnLinearGenome {
+    fn relationship<T: LocateOnLinearGenome>(&self, origin: T) -> SpatialRelationship {
+        let origin = origin.get_linear_location();
+        let target = &self.get_linear_location();
+        spatial_relationship(origin, target)
+    }
+}
+impl<'genome> Relationship for Operator<'genome> {}
+impl<'genome> Relationship for SearchGene<'genome> {}
+impl<'blast, 'genome> Relationship for SearchBlastFragment<'blast, 'genome> {}
+*/
 
 // Given a genome and all the sequence permutations of an (operator) consensus sequence,
 // locate all places in the genome where some variant of the consensus sequence is found.
@@ -477,48 +565,6 @@ fn find_genome_operators<'genome>(target_genome: &mut SearchGenome<'genome, '_>,
     }
 }
 
-// Given a genome with genes and a BLAST table, updates all the genes in the genome 
-// instance to reflect whether each is associated with any known BLAST hits
-fn blast_link(genome: &mut SearchGenome) {
-
-    // Check if genome has associated blast hits; exit call if genome has no associated blasts
-    let blast_hits = match &genome.fragments {
-        Some(hits) => hits,
-        None => return,
-    };
-
-    // Check if genome has associated gene annotations; exit call if genome has no associated genes
-    let genes = match &mut genome.genes {
-        Some(genes) => genes,
-        None => return,
-    };
-
-    // Check the relationship every gene has with every known BLAST hit
-    for gene in genes {
-        for hit in blast_hits {
-            let gene_loc = &gene.linear_location;
-            let hit_loc = &hit.linear_location;
-            
-            // If a new match is found
-            if let SpatialRelationship::Overlap(_) = spatial_relationship(gene_loc, hit_loc) {
-
-                // If gene and blast hit are determined to overlap, either create a new storage vector
-                // for blast associations if one doesn't exist, or append new blast association to the
-                // existing list
-                gene.blast_association = match &mut gene.blast_association {
-                    None => {
-                        Some(vec![hit.blast])
-                    },
-                    Some(x) => {
-                        x.push(hit.blast);
-                        continue;
-                    }
-                }
-            }
-        }
-    }
-}
-
 // Determine what spatial relationship two genomic elements A and B have with each other;
 // this function is non-commutative, as the spatial relationship returned is always given
 // as the positioning of B relative to A
@@ -647,7 +693,49 @@ where R: LocateOnLinearGenome,
     }
 }
 
+// Given a genome with genes and a BLAST table, updates all the genes in the genome 
+// instance to reflect whether each is associated with any known BLAST hits
+fn blast_results_linker(genome: &mut SearchGenome) {
 
+    // Check if genome has associated blast hits; exit call if genome has no associated blasts
+    let blast_hits = match &genome.fragments {
+        Some(hits) => hits,
+        None => return,
+    };
+
+    // Check if genome has associated gene annotations; exit call if genome has no associated genes
+    let genes = match &mut genome.genes {
+        Some(genes) => genes,
+        None => return,
+    };
+
+    // Check the relationship every gene has with every known BLAST hit
+    for gene in genes {
+        let gene_loc = &gene.linear_location;
+
+        for hit in blast_hits {
+            let hit_loc = &hit.linear_location;
+            
+            // If a new match is found
+            if let SpatialRelationship::Overlap(_) = spatial_relationship(gene_loc, hit_loc) {
+                // If gene and blast hit are determined to overlap, either create a new storage vector
+                // for blast associations if one doesn't exist, or append new blast association to the
+                // existing list
+                gene.blast_association = match &mut gene.blast_association {
+                    None => {
+                        let mut new_association_table: HashSet<genome::BlastAssociationType> = HashSet::new();
+                        new_association_table.insert(hit.blast_type.clone());
+                        Some(new_association_table)
+                    },
+                    Some(association_table) => {
+                        association_table.insert(hit.blast_type.clone());
+                        continue
+                    }
+                }
+            }
+        }
+    }
+}
 
 
 
@@ -1230,26 +1318,33 @@ mod tests {
     // Several of the following tests require a test Genome to work with, so this performs that import operation
     fn import_tigr4_lacto_genome() -> (Genome, Genome) {
 
+        // GLOBAL
+        // Import metadata
+        let now = SystemTime::now();
+        let refseq_metadata_file = PathBuf::from("tests/test_assets/assembly_summary_refseq.txt");
+        let genbank_metadata_file = PathBuf::from("tests/test_assets/assembly_summary_genbank.txt");
+        let refseq_meta = import::import_database_summary(refseq_metadata_file).into_iter();
+        let genbank_meta = import::import_database_summary(genbank_metadata_file).into_iter();
+        let full_metadata: HashMap<String, AssemblyMetadata> = refseq_meta.chain(genbank_meta).collect();
+        println!("Assembly databases import time: {}ms", now.elapsed().unwrap().as_millis());
+
         // TIGR4
         // Paths to relevant files to TIGR4
+        let now = SystemTime::now();
         let assembly_name = "GCF_000006885.1_ASM688v1".to_string();
         let genome_seq_file = PathBuf::from("tests/test_assets/GCF_000006885.1_ASM688v1/GCF_000006885.1_ASM688v1_genomic.fna");
         let genome_annotation_file = PathBuf::from("tests/test_assets/GCF_000006885.1_ASM688v1/GCF_000006885.1_ASM688v1_genomic.gff");
-        let refseq_metadata_file = PathBuf::from("tests/test_assets/assembly_summary_refseq.txt");
-        let genbank_metadata_file = PathBuf::from("tests/test_assets/assembly_summary_genbank.txt");
 
         // Import data relevant to TIGR4
         let protogenome = import::parse_genome_sequence(&assembly_name, genome_seq_file);
         let protogenes = import::parse_genome_annotation(genome_annotation_file);
-        let refseq_meta = import::import_database_summary(refseq_metadata_file).into_iter();
-        let genbank_meta = import::import_database_summary(genbank_metadata_file).into_iter();
-        let full_metadata: HashMap<String, AssemblyMetadata> = refseq_meta.chain(genbank_meta).collect();
 
         // Build TIGR4 genome
         let asm_pull_error = "ERROR: could not find assembly name in metadata database!";
         let metadata = full_metadata.get(&assembly_name).expect(asm_pull_error);
         let genes = Some(genome::Gene::convert_annotation_entry_list(&protogenes));
         let t4 = genome::Genome::from_proto(protogenome, metadata, genes);
+        println!("TIGR4 proto-genome import time: {}ms", now.elapsed().unwrap().as_millis());
 
         // LACTO
         // Paths to relevant files to lacto
@@ -1272,7 +1367,7 @@ mod tests {
 
     #[test]
     #[allow(non_snake_case)]
-    fn derive_circular_genome_from_linear() {
+    fn derive_circular_genome_from_linear_1() {
 
         let imported_genomes = import_tigr4_lacto_genome();
 
@@ -1328,16 +1423,20 @@ mod tests {
 
     #[test]
     #[allow(non_snake_case)]
-    fn test_operator_search_1() {
+    fn test_operator_search() {
 
         // CopY Operators
         let (operator_seq, table) = build_cop_permutation_table();
         let operators = SequencePermutations::new("Cop Operator".to_string(), operator_seq, table);
         let imported_genomes = import_tigr4_lacto_genome();
+
+        // Load BLAST hits
+        let blast_file = PathBuf::from("tests/test_assets/CopY_blast_result.txt");
+        let blast_table = genome::BlastHitsTable::build_table_from_file(genome::BlastAssociationType::CopY, blast_file);
         
         // TIGR4
         let TIGR4 = imported_genomes.0;
-        let TIGR4_search = SearchGenome::new(&TIGR4, &operators);
+        let TIGR4_search = SearchGenome::new(&TIGR4, &operators, None);
 
         // T4 PRINTING
         for (index, op) in TIGR4_search.operators.clone().unwrap().iter().enumerate() {
@@ -1417,26 +1516,303 @@ mod tests {
             },
             None => panic!("No operators."),
         };
-
         assert_eq!(known_operators, *test_operators);
 
 
         // LACTO PRINTING
         println!();
         let lacto = imported_genomes.1;
-        let lacto_search = SearchGenome::new(&lacto, &operators);
-        for (index, op) in lacto_search.operators.unwrap().iter().enumerate() {
+        let lacto_search = SearchGenome::new(&lacto, &operators, None);
+        for (index, op) in lacto_search.operators.clone().unwrap().iter().enumerate() {
             println!("[{}]\t{:?}\t{}\t\t5'-{}-3'\t{}:{}", index+1, op.palindromic, op.linear_location.strand, op.seq, op.linear_location.start_bound+1, op.linear_location.end_bound);
         }
+
+        // LACTO Known Values
+        let mut known_operators: Vec<Operator> = Vec::new();
+        let palindrome_statuses =   [1,1,1,1,1,0,1,0,1,0,1,1,0,1,0,0,1,0,0,0,1,1,1,0,1,0];
+        let strand_statuses =       [1,1,1,1,1,1,1,1,1,0,1,1,0,1,1,0,1,1,0,0,1,1,1,0,1,0];
+        let sequences = [
+            "GTTTACAATTGTAAAC",
+            "ATTTACACTTGTAAAT",
+            "GTTTACATGTGTAAAT",
+            "GGCGACAGGTGTAGGC",
+            "AATGACAATTGTAGGT",
+            "GCTGACAGCCGTCGTC",
+            "ATTGACAATTGTCAGT",
+            "GCTTACAAGCGTCAAT",
+            "GTTTACACGTGTAAAC",
+            "ATTTACAACCGTAAAC",
+            "GTTTACAATTGTAAAC",
+            "ATTTACAATTGTCAGC",
+            "ACCTACAAACGTAGTT",
+            "GTTTACATCTGTAGAT",
+            "GCTGACAATCGTCATC",
+            "GTTTACAAACGTAAAC",
+            "AGTTACATCTGTCACT",
+            "ACCGACAGCCGTCATC",
+            "ACTGACAATCGTCGTT",
+            "GTTTACATGCGTCAAT",
+            "ACCGACACCTGTCAAT",
+            "GTTTACATATGTAATC",
+            "ATTTACACTTGTAAAC",
+            "GCTTACATCCGTAGCC",
+            "AATTACAACTGTAATT",
+            "ACCTACATGCGTCAAT",
+        ];
+        let starts = [
+            79266,
+            205350,
+            386028,
+            391644,
+            470963,
+            631419,
+            663534,
+            773909,
+            845055,
+            845914,
+            873353,
+            1168433,
+            1262872,
+            1280110,
+            1384570,
+            1511051,
+            1580466,
+            1700449,
+            1787812,
+            1926251,
+            1986580,
+            1991994,
+            1992021,
+            2161546,
+            2182862,
+            2293848,
+        ];
+        
+        for (((seq, palin), strand), start) in sequences.iter()
+                                .zip(palindrome_statuses.iter())
+                                .zip(strand_statuses.iter()) 
+                                .zip(starts.iter()) {
+            
+            let new_region = GenomeRegion {
+                replicon_accession: "NC_002662.1".to_string(),
+                replicon_strand: match strand {
+                    0 => StrandSense::Reverse,
+                    _ => StrandSense::Forward,
+                },
+                start_index_ord: *start as usize,
+                end_index_ord: start + 15,
+            };
+            
+            let new_op = Operator {
+                linear_location: LinearGenomeLocation::new(&new_region, &lacto),
+                seq: seq.to_string(),
+                palindromic: match palin {
+                    0 => PalindromeStatus::No,
+                    _ => PalindromeStatus::Yes,
+                },
+            };
+
+            known_operators.push(new_op);
+        }
+
+
+        // Lacto Test Values
+        let test_operators = match &lacto_search.operators {
+            Some(operators) => {
+                operators
+            },
+            None => panic!("No operators."),
+        };
+        assert_eq!(known_operators, *test_operators);
     }
 
     #[test]
     #[allow(non_snake_case)]
-    fn test_operator_search_2() {
+    fn derive_linear_from_genome_region_then_derive_circular_from_linear() {
 
+        // Import Genomes -- runtime-values are measured in the helper function itself
+        let (TIGR4, _) = import_tigr4_lacto_genome(); 
+
+        // Build genome region for BLAST hit
+        let proto_test = GenomeRegion {
+            replicon_accession: "NC_003028.3".to_string(),
+            replicon_strand: StrandSense::Reverse,
+            start_index_ord: 2_012_333,
+            end_index_ord: 2_010_867,
+        };
+
+        // Linear location for a BLAST hit
+        let actual_hit_loc = LinearGenomeLocation {
+            replicon: TIGR4.replicons.get(&"NC_003028.3".to_string()).unwrap(),
+            strand: StrandSense::Reverse,
+            start_bound: 2_012_332,
+            end_bound: 2_010_867,
+        };
+        let test_hit_loc = LinearGenomeLocation::new(&proto_test, &TIGR4);
+        assert_eq!(actual_hit_loc, test_hit_loc);
+
+        // Build genome region for TEST GENE
+        let proto_gene = GenomeRegion {
+            replicon_accession: "NC_003028.3".to_string(),
+            replicon_strand: StrandSense::Reverse,
+            start_index_ord: 1_922_125,
+            end_index_ord: 1_922_997,
+        };
+
+        // Linear location for a GENE
+        let actual_gene_loc = LinearGenomeLocation {
+            replicon: TIGR4.replicons.get(&"NC_003028.3".to_string()).unwrap(),
+            strand: StrandSense::Reverse,
+            start_bound: 1_922_124,
+            end_bound: 1_922_997,
+        };
+        let test_gene_loc = LinearGenomeLocation::new(&proto_gene, &TIGR4);
+        assert_eq!(actual_gene_loc, test_gene_loc);
+
+
+        // Calculate and compare circular locations for HIT + GENE
+        let actual_hit_loc = CircularGenomeLocation {
+            replicon: TIGR4.replicons.get(&"NC_003028.3".to_string()).unwrap(),
+            strand: StrandSense::Reverse,
+            start_unit_vec: GenomeVector::new(2_012_332, REPLICON_SIZE),
+            end_unit_vec: GenomeVector::new(2_010_867, REPLICON_SIZE),
+            center: GenomeVector::new_arbritary(2_011_599.50, REPLICON_SIZE),
+            arc_length: 1465.0,
+        };
+        let test_hit_circ_loc = CircularGenomeLocation::new(&test_hit_loc);
+        actual_hit_loc.test_compare(&test_hit_circ_loc);
+
+        const REPLICON_SIZE: usize = 2_160_842;
+        let actual_gene_loc = CircularGenomeLocation {
+            replicon: TIGR4.replicons.get(&"NC_003028.3".to_string()).unwrap(),
+            strand: StrandSense::Reverse,
+            start_unit_vec: GenomeVector::new(1_922_124, REPLICON_SIZE),
+            end_unit_vec: GenomeVector::new(1_922_997, REPLICON_SIZE),
+            center: GenomeVector::new_arbritary(1_922_560.50, REPLICON_SIZE),
+            arc_length: 873.0,
+        };
+        let test_gene_circ_loc = CircularGenomeLocation::new(&test_gene_loc);
+        actual_gene_loc.test_compare(&test_gene_circ_loc);
     }
 
+    #[test]
+    #[allow(non_snake_case)]
+    fn test_overlap_1() {
 
+        // Import Genomes -- runtime-values are measured in the helper function itself
+        let (TIGR4, _) = import_tigr4_lacto_genome(); 
+
+        // Build genome region for BLAST hit
+        let proto_hit_test = GenomeRegion {
+            replicon_accession: "NC_003028.3".to_string(),
+            replicon_strand: StrandSense::Reverse,
+            start_index_ord: 2012333,
+            end_index_ord: 2010867,
+        };
+
+        // Linear location for BLAST hit
+        let hit_loc = LinearGenomeLocation::new(&proto_hit_test, &TIGR4);
+
+        // Build genome region for TEST GENE
+        let proto_gene_test = GenomeRegion {
+            replicon_accession: "NC_003028.3".to_string(),
+            replicon_strand: StrandSense::Reverse,
+            start_index_ord: 1922125,
+            end_index_ord: 1922997,
+        };
+
+        // Linear location for GENE
+        let gene_loc = LinearGenomeLocation::new(&proto_gene_test, &TIGR4);
+
+        // Calculate and compare spatial relationships
+        let test_relationship_1 = spatial_relationship(&gene_loc, &hit_loc);
+        let test_relationship_2 = spatial_relationship(&hit_loc, &gene_loc);
+
+        let actual_relationship_1 = SpatialRelationship::Neighbor(NeighborType::FivePrime(87_869));
+        let actual_relationship_2 = SpatialRelationship::Neighbor(NeighborType::ThreePrime(87_869));
+
+        println!("Test Relationship of HIT relative to GENE: {:?}", test_relationship_1);
+        println!("Test Relationship of GENE relative to HIT: {:?}", test_relationship_2);
+        println!("Actual Relationship of HIT relative to GENE: {:?}", actual_relationship_1);
+        println!("Actual Relationship of GENE relative to HIT: {:?}", actual_relationship_2);
+    }
+
+    
+
+
+
+
+
+
+    use std::time::Duration; 
+    use std::time::SystemTime;
+    use std::thread;
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn timing_diagnostic_and_BLAST_linker_test() {
+        
+        // Load BLAST hits
+        let now = SystemTime::now();
+        let blast_files = [
+            "tests/test_assets/CopA_blast_result.txt",
+            "tests/test_assets/CupA_blast_result.txt",
+            "tests/test_assets/CopY_blast_result.txt",
+            "tests/test_assets/CopZ-TcrZ_blast_result.txt",
+        ];
+
+        let mut blast_files: Vec<PathBuf> = blast_files.into_iter().map(|x| PathBuf::from(x)).collect();
+        let CopA_table = genome::BlastHitsTable::build_table_from_file(genome::BlastAssociationType::CopA, blast_files.remove(0));
+        let CupA_table = genome::BlastHitsTable::build_table_from_file(genome::BlastAssociationType::CupA, blast_files.remove(0));
+        let CopY_table = genome::BlastHitsTable::build_table_from_file(genome::BlastAssociationType::CopY, blast_files.remove(0));
+        let CopZ_table = genome::BlastHitsTable::build_table_from_file(genome::BlastAssociationType::CopZ, blast_files.remove(0));
+        let BLAST_tables = vec![CopA_table, CupA_table, CopY_table, CopZ_table];
+        println!("BLAST results loading time: {}ms", now.elapsed().unwrap().as_millis());
+
+        // CopY Operators
+        let now = SystemTime::now();
+        let (operator_seq, table) = build_cop_permutation_table();
+        let operators = SequencePermutations::new("Cop Operator".to_string(), operator_seq, table);
+        println!("Operator calculation time: {}ms", now.elapsed().unwrap().as_millis());
+
+        // Import Genomes -- runtime-values are measured in the helper function itself
+        let (TIGR4, LACTO) = import_tigr4_lacto_genome(); 
+
+        // Parse + search genomes
+        let t4_now = SystemTime::now();
+        let TIGR4_search = SearchGenome::new(&TIGR4, &operators, Some(&BLAST_tables));
+        println!("Build T4 search genome struct time: {}ms", t4_now.elapsed().unwrap().as_millis());
+
+        let now = SystemTime::now();
+        let LACTO_search = SearchGenome::new(&LACTO, &operators, Some(&BLAST_tables));
+        println!("Build LACTO search genome struct time: {}ms", now.elapsed().unwrap().as_millis()); 
+
+        // 
+        for gene in TIGR4_search.genes.unwrap() {
+
+            if gene.gene.feature_type == FeatureType::Gene {
+                continue;
+            }
+
+            if let Some(x) = gene.blast_association {
+                println!("{}\t{:?}\t{:?}", gene.linear_location.start_bound+1, gene.gene.feature_type, x);
+            }
+        }
+
+        println!("\n-----\n");
+
+        // 
+        for gene in LACTO_search.genes.unwrap() {
+
+            if gene.gene.feature_type == FeatureType::Gene {
+                continue;
+            }
+
+            if let Some(x) = gene.blast_association {
+                println!("{}\t{:?}\t{:?}", gene.linear_location.start_bound+1, gene.gene.feature_type, x);
+            }
+        }
+    }
 
 
 
@@ -1513,9 +1889,25 @@ mod tests {
     impl Display for CircularGenomeLocation<'_> {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 
-            let theta_1 = GenomeVector(1.0, 0.0).angle(&self.start_unit_vec).to_degrees();
-            let theta_2 = GenomeVector(1.0, 0.0).angle(&self.end_unit_vec).to_degrees();
-            let theta_3 = GenomeVector(1.0, 0.0).angle(&self.center).to_degrees();
+            let x_hat = GenomeVector(1.0, 0.0);
+            let mut theta_1 = x_hat.angle(&self.start_unit_vec).to_degrees();
+            let mut theta_2 = x_hat.angle(&self.end_unit_vec).to_degrees();
+            let mut theta_3 = x_hat.angle(&self.center).to_degrees();
+            let orientation_1 = x_hat.cross(&self.start_unit_vec);
+            let orientation_2 = x_hat.cross(&self.end_unit_vec);
+            let orientation_3 = x_hat.cross(&self.center);
+
+            if orientation_1 < 0.0 {
+                theta_1 = 360.0 - theta_1;
+            }
+
+            if orientation_2 < 0.0 {
+                theta_2 = 360.0 - theta_2;
+            }
+
+            if orientation_3 < 0.0 {
+                theta_3 = 360.0 - theta_3;
+            }
 
             write!(f, "Circular Location\nReplicon: {}\nStrand: {:.15}\nReplicon Size: {}bp\nArc Length: {:.6}bp\nStart:\t{:.15} (θ₁ = {:.5}°)\n\
                        End:\t{:.15} (θ₂ = {:.5}°)\nCenter:\t{:.15} (θ₃ = {:.5}°)\n", 
