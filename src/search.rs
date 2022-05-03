@@ -27,6 +27,7 @@ enum OverlapType {
     ThreePrimeBoundary,
     EngulfedBy,
     ContainerOf,
+    PerfectEclipse,
 }
 
 enum GenomeObject<'blast, 'genome> {
@@ -36,9 +37,9 @@ enum GenomeObject<'blast, 'genome> {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-enum PalindromeStatus {
-    Yes,
-    No,
+enum OperatorDimension {
+    Double,
+    Single,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -175,6 +176,7 @@ impl<'genome> LinearGenomeLocation<'genome> {
         let genome_err = "ERROR: could not find replicon denoted in GenomeRegion in the parent Genome supplied!";
         let replicon = parent.replicons.get(&input.replicon_accession).expect(genome_err);
         let strand = input.replicon_strand.clone();
+
         let left = input.start_index_ord - 1;
         let right = input.end_index_ord;
 
@@ -208,29 +210,19 @@ impl<'genome> CircularGenomeLocation<'genome> {
         let replicon_len = replicon.fwd_strand.len();
         let replicon_radius = (replicon_len as f64) / (2.0 * PI);
         let strand = input.strand.clone();
-        let input_element_len = (input.end_bound as i64 - input.start_bound as i64).abs();
 
         // Circular positioning logistics
         let start_unit_vec = GenomeVector::new(input.start_bound, replicon_len);
         let end_unit_vec = GenomeVector::new(input.end_bound, replicon_len);
-        let arc_orientation = (replicon_len as f64 / 2.0) - (input_element_len as f64);
+        let arc_orientation = start_unit_vec.cross(&end_unit_vec);
         let center_unit_vec: GenomeVector;
         let arc_length: f64;
+        const ZERO: f64 = 0.0;
 
-        // The calculated arc-length and the exact center vector depend on the spatial orientation b/w the bounding start-
-        // and end-vectors of a given element. To determine this relationship, we use the length of the feature derived from
-        // its linear genome location; if the feature is longer than half the replicon, we use the larger angle between
-        // its vectors; if the feature is shorter than half the replicon, we use the shorter angle between the features.
-        // This approach is slightly better than using the cross_pdt as the determinant of orientation as it is agnostic
-        // of which bound is listed as the start bound, and which bound is listed as the end bound. NCBI derived blast data,
-        // for elements sitting on the reverse strand, often lists end_ord_indicies that are LESS than start_ord_indices.
-        // In the cross product scheme, this meant to take the LARGER arc between the two vectors, even if the gene feature
-        // being referenced was really along the smaller one--a result we obviously don't want. This new orientation scheme 
-        // where start and end vectors are determined by the length of the feature addresses this shortcoming.
-        if arc_orientation > 0.0 {
+        if arc_orientation > ZERO {
             center_unit_vec = (&start_unit_vec + &end_unit_vec).normalize();
             arc_length = start_unit_vec.angle(&end_unit_vec) * replicon_radius;
-        } else if arc_orientation < 0.0 {
+        } else if arc_orientation < ZERO {
             center_unit_vec = (&start_unit_vec + &end_unit_vec).normalize().scalar(-1.0);
             arc_length = (2.0 * PI - start_unit_vec.angle(&end_unit_vec)) * replicon_radius;
         } else {
@@ -357,6 +349,7 @@ impl<'genome, 'blast, 'seq> SearchGenome<'genome, 'blast> {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
 struct SearchGene<'genome> {
     gene: &'genome Gene,
     linear_location: LinearGenomeLocation<'genome>,
@@ -374,7 +367,7 @@ struct SearchBlastFragment<'blast, 'genome> {
 struct Operator<'genome> {
     linear_location: LinearGenomeLocation<'genome>,
     seq: String,
-    palindromic: PalindromeStatus,
+    dimension: OperatorDimension,
 }
 
 impl<'genome> genome::GetSequence for Operator<'genome> {
@@ -408,9 +401,9 @@ impl<'blast, 'genome> LocateOnLinearGenome for SearchBlastFragment<'blast, 'geno
     }
 }
 
-/* How object 'self' is related to a given origin; turns spatial relationship into a method call on objects
+// How object 'self' is related to a given origin; turns spatial relationship into a method call on objects
 trait Relationship: LocateOnLinearGenome {
-    fn relationship<T: LocateOnLinearGenome>(&self, origin: T) -> SpatialRelationship {
+    fn relationship_with<T: LocateOnLinearGenome>(&self, origin: &T) -> SpatialRelationship {
         let origin = origin.get_linear_location();
         let target = &self.get_linear_location();
         spatial_relationship(origin, target)
@@ -419,7 +412,6 @@ trait Relationship: LocateOnLinearGenome {
 impl<'genome> Relationship for Operator<'genome> {}
 impl<'genome> Relationship for SearchGene<'genome> {}
 impl<'blast, 'genome> Relationship for SearchBlastFragment<'blast, 'genome> {}
-*/
 
 // Given a genome and all the sequence permutations of an (operator) consensus sequence,
 // locate all places in the genome where some variant of the consensus sequence is found.
@@ -490,7 +482,7 @@ fn find_genome_operators<'genome>(target_genome: &mut SearchGenome<'genome, '_>,
             let new_operator = Operator {
                 linear_location: LinearGenomeLocation::new(&tmp_genome_region, parent_genome.genome),
                 seq: proto_operator.0,
-                palindromic: PalindromeStatus::No,
+                dimension: OperatorDimension::Single,
             };
 
             storage.push(new_operator);
@@ -531,13 +523,13 @@ fn find_genome_operators<'genome>(target_genome: &mut SearchGenome<'genome, '_>,
         }
     }
 
-    // Mark any operators in the list as 'palindromic' if their start index appears more than once
+    // Mark any operators in the list as 'two-dimensional' if their start index appears more than once
     let operator_start_indicies: Vec<usize> = operator_list.iter().map(|x| x.linear_location.start_bound).collect();
     for operator in operator_list.iter_mut() {
         let start_bound = operator.linear_location.start_bound;
         let count = operator_start_indicies.iter().filter(|&n| *n == start_bound).count();
         if count > 1 {
-            operator.palindromic = PalindromeStatus::Yes
+            operator.dimension = OperatorDimension::Double
         }
     }
 
@@ -599,6 +591,7 @@ fn spatial_relationship(location_A: &LinearGenomeLocation, location_B: &LinearGe
     let Δ_arc_length = replicon_radius * Δ_angle; // Length of an arc = theta*radius, where theta is the angle of arc in radians
 
     // Calculate values of the algorithm
+    const ZERO: f64 = 0.0;
     let different_replicons = (A.replicon.accession_id != B.replicon.accession_id);
     let no_overlap = Δ_arc_length >= (A_radius + B_radius);
     let engulfing_overlap = f64::max(A_radius, B_radius) > (Δ_arc_length + f64::min(A_radius, B_radius));
@@ -607,12 +600,19 @@ fn spatial_relationship(location_A: &LinearGenomeLocation, location_B: &LinearGe
     let output = if different_replicons {
         SpatialRelationship::None
     } else if no_overlap {
-        let arc_distance = Δ_arc_length - A_radius - B_radius;
 
-        if orientation.is_sign_positive() { // AxB > 0 => center of B is to the LEFT of center of A (for fwd strand)
-            SpatialRelationship::Neighbor(NeighborType::ThreePrime(arc_distance as usize))
-        } else { // AxB < 0 => center of B is to the RIGHT of center of A
-            SpatialRelationship::Neighbor(NeighborType::FivePrime(arc_distance as usize))
+        // Arc distance should be a whole integer, so round before casting; need to round
+        // because casting to usize automatically applies a floor rounding, which means
+        // a number like 18361.999999999796 gets rounded to 18361 instead of 18362. Applying
+        // a normal integer rounding operation before casting should stop that from happening.
+        let arc_distance = (Δ_arc_length - A_radius - B_radius).round() as usize;
+
+        if orientation > ZERO { 
+            // AxB > 0 => center of B is to the LEFT of center of A (for fwd strand)
+            SpatialRelationship::Neighbor(NeighborType::ThreePrime(arc_distance))
+        } else { 
+            // AxB < 0 => center of B is to the RIGHT of center of A
+            SpatialRelationship::Neighbor(NeighborType::FivePrime(arc_distance))
         }
     } else if engulfing_overlap {
         if A_radius > B_radius {
@@ -621,7 +621,9 @@ fn spatial_relationship(location_A: &LinearGenomeLocation, location_B: &LinearGe
             SpatialRelationship::Overlap(OverlapType::ContainerOf)
         }
     } else {
-        if orientation.is_sign_positive() {
+        if orientation == ZERO {
+            SpatialRelationship::Overlap(OverlapType::PerfectEclipse)
+        } else if orientation > ZERO {
             SpatialRelationship::Overlap(OverlapType::ThreePrimeBoundary)
         } else {
             SpatialRelationship::Overlap(OverlapType::FivePrimeBoundary)
@@ -704,13 +706,11 @@ fn blast_results_linker(genome: &mut SearchGenome) {
 
     // Check the relationship every gene has with every known BLAST hit
     for gene in genes {
-        let gene_loc = &gene.linear_location;
 
         for hit in blast_hits {
-            let hit_loc = &hit.linear_location;
             
             // If a new match is found
-            if let SpatialRelationship::Overlap(_) = spatial_relationship(gene_loc, hit_loc) {
+            if let SpatialRelationship::Overlap(_) = gene.relationship_with(hit) {
                 // If gene and blast hit are determined to overlap, either create a new storage vector
                 // for blast associations if one doesn't exist, or append new blast association to the
                 // existing list
@@ -746,6 +746,7 @@ mod tests {
     use crate::import::{self, AssemblyMetadata};
     use std::path::PathBuf;
     use std::{collections::HashMap, f64::consts::E};
+    use std::time::SystemTime;
 
     #[test]
     fn test_genome_vector_cross_pdt() {
@@ -1164,6 +1165,80 @@ mod tests {
 
     #[test]
     #[allow(non_snake_case)]
+    fn genome_feature_over_continuity_linear_and_circular() {
+
+        let (T4, LACTO) = import_tigr4_lacto_genome();
+
+        // T4
+        let test_region_T4 = GenomeRegion {
+            replicon_accession: "NC_003028.3".to_string(),
+            replicon_strand: StrandSense::Reverse,
+            start_index_ord: 2_160_000,
+            end_index_ord: 2_572,
+        };
+
+        let t4_linear_test = LinearGenomeLocation::new(&test_region_T4, &T4);
+
+        let actual_t4_linear = LinearGenomeLocation {
+            replicon: T4.replicons.get(&"NC_003028.3".to_string()).unwrap(),
+            strand: StrandSense::Reverse,
+            start_bound: 2_159_999,
+            end_bound: 2_572,
+        };
+
+        let t4_circular = CircularGenomeLocation::new(&t4_linear_test);
+
+        let start_vec = GenomeVector::new(2_159_999, T4.replicons.get(&"NC_003028.3".to_string()).unwrap().len);
+        let end_vec = GenomeVector::new(2_572, T4.replicons.get(&"NC_003028.3".to_string()).unwrap().len);
+        let actual_t4_circ = CircularGenomeLocation {
+            replicon: T4.replicons.get(&"NC_003028.3".to_string()).unwrap(),
+            strand: StrandSense::Reverse,
+            start_unit_vec: start_vec.clone(),
+            end_unit_vec: end_vec.clone(),
+            center: (&start_vec + &end_vec).normalize(),
+            arc_length: 3415.00,
+        };
+
+        assert_eq!(actual_t4_linear, t4_linear_test);
+        actual_t4_circ.test_compare(&t4_circular);
+
+
+        // LACTO
+        let test_region_LACTO = GenomeRegion {
+            replicon_accession: "NC_002662.1".to_string(),
+            replicon_strand: StrandSense::Reverse,
+            start_index_ord: 2_365_000,
+            end_index_ord: 2_572,
+        };
+
+        let lacto_linear_test = LinearGenomeLocation::new(&test_region_LACTO, &LACTO);
+
+        let actual_lacto_linear = LinearGenomeLocation {
+            replicon: LACTO.replicons.get(&"NC_002662.1".to_string()).unwrap(),
+            strand: StrandSense::Reverse,
+            start_bound: 2_364_999,
+            end_bound: 2_572,
+        };
+
+        let lacto_circular = CircularGenomeLocation::new(&actual_lacto_linear);
+
+        let start_vec = GenomeVector::new(2_364_999, LACTO.replicons.get(&"NC_002662.1".to_string()).unwrap().len);
+        let end_vec = GenomeVector::new(2_572, LACTO.replicons.get(&"NC_002662.1".to_string()).unwrap().len);
+        let actual_lacto_circ = CircularGenomeLocation {
+            replicon: LACTO.replicons.get(&"NC_002662.1".to_string()).unwrap(),
+            strand: StrandSense::Reverse,
+            start_unit_vec: start_vec.clone(),
+            end_unit_vec: end_vec.clone(),
+            center: (&start_vec + &end_vec).normalize(),
+            arc_length: 3162.00,
+        };
+
+        assert_eq!(actual_lacto_linear, lacto_linear_test);
+        actual_lacto_circ.test_compare(&lacto_circular);
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
     #[allow(unused_parens)]
     fn genome_arc_compare_wrap_arounds() {
         const REPLICON_SIZE: usize = 25_000_000;
@@ -1428,14 +1503,15 @@ mod tests {
         let TIGR4_search = SearchGenome::new(&TIGR4, &operators, None);
 
         // T4 PRINTING
+        println!("\nTIGR4");
         for (index, op) in TIGR4_search.operators.clone().unwrap().iter().enumerate() {
-            println!("[{}]\t{:?}\t{}\t\t5'-{}-3'\t{}:{}", index, op.palindromic, op.linear_location.strand, op.seq, op.linear_location.start_bound+1, op.linear_location.end_bound);
+            println!("[{}]\t{:?}\t{}\t\t5'-{}-3'\t{}:{}", index+1, op.dimension, op.linear_location.strand, op.seq, op.linear_location.start_bound+1, op.linear_location.end_bound);
         }
 
         // TIGR4 Known Values
         let mut known_operators: Vec<Operator> = Vec::new();
-        let palindrome_statuses =   [0,0,1,1,1,1,1,0,0,1,1,0,1,0,1];
-        let strand_statuses =       [1,0,1,1,1,1,1,1,1,1,1,1,1,1,1];
+        let dimensional_statuses =   [0,0,1,1,1,1,1,0,0,1,1,0,1,0,1];
+        let strand_statuses =        [1,0,1,1,1,1,1,1,1,1,1,1,1,1,1];
         let sequences = [
             "GACTACACTCGTAAGT",
             "ATTGACAACCGTAATC",
@@ -1471,8 +1547,8 @@ mod tests {
             2123135,
         ];
         
-        for (((seq, palin), strand), start) in sequences.iter()
-                              .zip(palindrome_statuses.iter())
+        for (((seq, dim), strand), start) in sequences.iter()
+                              .zip(dimensional_statuses.iter())
                               .zip(strand_statuses.iter()) 
                               .zip(starts.iter()) {
             
@@ -1482,16 +1558,16 @@ mod tests {
                     0 => StrandSense::Reverse,
                     _ => StrandSense::Forward,
                 },
-                start_index_ord: *start as usize,
+                start_index_ord: *start,
                 end_index_ord: start + 15,
             };
             
             let new_op = Operator {
                 linear_location: LinearGenomeLocation::new(&new_region, &TIGR4),
                 seq: seq.to_string(),
-                palindromic: match palin {
-                    0 => PalindromeStatus::No,
-                    _ => PalindromeStatus::Yes,
+                dimension: match dim {
+                    0 => OperatorDimension::Single,
+                    _ => OperatorDimension::Double,
                 },
             };
 
@@ -1509,17 +1585,17 @@ mod tests {
 
 
         // LACTO PRINTING
-        println!();
+        println!("\nLACTO");
         let lacto = imported_genomes.1;
         let lacto_search = SearchGenome::new(&lacto, &operators, None);
         for (index, op) in lacto_search.operators.clone().unwrap().iter().enumerate() {
-            println!("[{}]\t{:?}\t{}\t\t5'-{}-3'\t{}:{}", index+1, op.palindromic, op.linear_location.strand, op.seq, op.linear_location.start_bound+1, op.linear_location.end_bound);
+            println!("[{}]\t{:?}\t{}\t\t5'-{}-3'\t{}:{}", index+1, op.dimension, op.linear_location.strand, op.seq, op.linear_location.start_bound+1, op.linear_location.end_bound);
         }
 
         // LACTO Known Values
         let mut known_operators: Vec<Operator> = Vec::new();
-        let palindrome_statuses =   [1,1,1,1,1,0,1,0,1,0,1,1,0,1,0,0,1,0,0,0,1,1,1,0,1,0];
-        let strand_statuses =       [1,1,1,1,1,1,1,1,1,0,1,1,0,1,1,0,1,1,0,0,1,1,1,0,1,0];
+        let dimensional_statuses =   [1,1,1,1,1,0,1,0,1,0,1,1,0,1,0,0,1,0,0,0,1,1,1,0,1,0];
+        let strand_statuses =        [1,1,1,1,1,1,1,1,1,0,1,1,0,1,1,0,1,1,0,0,1,1,1,0,1,0];
         let sequences = [
             "GTTTACAATTGTAAAC",
             "ATTTACACTTGTAAAT",
@@ -1577,8 +1653,8 @@ mod tests {
             2293848,
         ];
         
-        for (((seq, palin), strand), start) in sequences.iter()
-                                .zip(palindrome_statuses.iter())
+        for (((seq, dim), strand), start) in sequences.iter()
+                                .zip(dimensional_statuses.iter())
                                 .zip(strand_statuses.iter()) 
                                 .zip(starts.iter()) {
             
@@ -1595,9 +1671,9 @@ mod tests {
             let new_op = Operator {
                 linear_location: LinearGenomeLocation::new(&new_region, &lacto),
                 seq: seq.to_string(),
-                palindromic: match palin {
-                    0 => PalindromeStatus::No,
-                    _ => PalindromeStatus::Yes,
+                dimension: match dim {
+                    0 => OperatorDimension::Single,
+                    _ => OperatorDimension::Double,
                 },
             };
 
@@ -1665,10 +1741,12 @@ mod tests {
             strand: StrandSense::Reverse,
             start_unit_vec: GenomeVector::new(2_012_332, REPLICON_SIZE),
             end_unit_vec: GenomeVector::new(2_010_867, REPLICON_SIZE),
-            center: GenomeVector::new_arbritary(2_011_599.50, REPLICON_SIZE),
-            arc_length: 1465.0,
+            center: GenomeVector::new_arbritary(931_178.50, REPLICON_SIZE),
+            arc_length: 2159377.0,
         };
         let test_hit_circ_loc = CircularGenomeLocation::new(&test_hit_loc);
+        println!("{}", actual_hit_loc);
+        println!("{}", test_hit_circ_loc);
         actual_hit_loc.test_compare(&test_hit_circ_loc);
 
         const REPLICON_SIZE: usize = 2_160_842;
@@ -1686,7 +1764,7 @@ mod tests {
 
     #[test]
     #[allow(non_snake_case)]
-    fn test_overlap_1() {
+    fn test_spatial_relationship_via_genome_regions() {
 
         // Import Genomes -- runtime-values are measured in the helper function itself
         let (TIGR4, _) = import_tigr4_lacto_genome(); 
@@ -1695,30 +1773,35 @@ mod tests {
         let proto_hit_test = GenomeRegion {
             replicon_accession: "NC_003028.3".to_string(),
             replicon_strand: StrandSense::Reverse,
-            start_index_ord: 2012333,
-            end_index_ord: 2010867,
+            start_index_ord: 2_012_333,
+            end_index_ord: 2_010_867,
         };
 
         // Linear location for BLAST hit
         let hit_loc = LinearGenomeLocation::new(&proto_hit_test, &TIGR4);
+        println!("{}", hit_loc);
 
         // Build genome region for TEST GENE
         let proto_gene_test = GenomeRegion {
             replicon_accession: "NC_003028.3".to_string(),
             replicon_strand: StrandSense::Reverse,
-            start_index_ord: 1922125,
-            end_index_ord: 1922997,
+            start_index_ord: 1_922_125,
+            end_index_ord: 1_922_997,
         };
 
         // Linear location for GENE
         let gene_loc = LinearGenomeLocation::new(&proto_gene_test, &TIGR4);
+        println!("{}", gene_loc);
 
         // Calculate and compare spatial relationships
+        let actual_relationship_1 = SpatialRelationship::Overlap(OverlapType::ContainerOf);
+        let actual_relationship_2 = SpatialRelationship::Overlap(OverlapType::EngulfedBy);
+
         let test_relationship_1 = spatial_relationship(&gene_loc, &hit_loc);
         let test_relationship_2 = spatial_relationship(&hit_loc, &gene_loc);
 
-        let actual_relationship_1 = SpatialRelationship::Neighbor(NeighborType::FivePrime(87_869));
-        let actual_relationship_2 = SpatialRelationship::Neighbor(NeighborType::ThreePrime(87_869));
+        assert_eq!(actual_relationship_1, test_relationship_1);
+        assert_eq!(actual_relationship_2, test_relationship_2);
 
         println!("Test Relationship of HIT relative to GENE: {:?}", test_relationship_1);
         println!("Test Relationship of GENE relative to HIT: {:?}", test_relationship_2);
@@ -1726,14 +1809,263 @@ mod tests {
         println!("Actual Relationship of GENE relative to HIT: {:?}", actual_relationship_2);
     }
 
-    
+    #[test]
+    #[allow(non_snake_case)]
+    fn test_spatial_relationship_1() {
 
+        // Import Genomes
+        let (TIGR4, _) = import_tigr4_lacto_genome();
 
+        // 5' Neighbor
+        let gene_region_left = GenomeRegion {
+            replicon_accession: "NC_003028.3".to_string(),
+            replicon_strand: StrandSense::Forward,
+            start_index_ord: 1_078_629,
+            end_index_ord: 1_082_279,
+        };
+        let gene_left = LinearGenomeLocation::new(&gene_region_left, &TIGR4);
+        println!("\n5' Neighbor\n{}", gene_left);
 
+        // 5' Gap
+        let gap_region_1 = GenomeRegion {
+            replicon_accession: "NC_003028.3".to_string(),
+            replicon_strand: StrandSense::Other,
+            start_index_ord: 1_082_280,
+            end_index_ord: 1_083_880,
+        };
+        let gap_1 = LinearGenomeLocation::new(&gap_region_1, &TIGR4);
+        let gap_1_len = (gap_1.start_bound as i64 - gap_1.end_bound as i64).abs() as usize;
+        println!("5' Gap\n{}", gap_1);
 
+        // Origin
+        let gene_region_center = GenomeRegion {
+            replicon_accession: "NC_003028.3".to_string(),
+            replicon_strand: StrandSense::Forward,
+            start_index_ord: 1_083_881,
+            end_index_ord: 1_089_895,
+        };
+        let gene_center = LinearGenomeLocation::new(&gene_region_center, &TIGR4);
+        println!("Origin\n{}", gene_center);
 
+        // Left-Center Relationship
+        let std_left = spatial_relationship(&gene_center, &gene_left);
+        let inv_left = spatial_relationship(&gene_left, &gene_center);
+        
+        let std_left_len = match &std_left {
+            SpatialRelationship::Neighbor(x) => match x {
+                NeighborType::FivePrime(x) => *x,
+                NeighborType::ThreePrime(x) => *x,
+            },
+            _ => panic!("ERROR: should be neighbors!"),
+        };
 
-    use std::time::SystemTime;
+        let inv_left_len = match &inv_left {
+            SpatialRelationship::Neighbor(x) => match x {
+                NeighborType::FivePrime(x) => *x,
+                NeighborType::ThreePrime(x) => *x,
+            },
+            _ => panic!("ERROR: should be neighbors!"),
+        };
+
+        println!("std: {:?}\ninv: {:?}\n", std_left, inv_left);
+
+        // 3' Gap
+        let gap_region_2 = GenomeRegion {
+            replicon_accession: "NC_003028.3".to_string(),
+            replicon_strand: StrandSense::Other,
+            start_index_ord: 1_089_896,
+            end_index_ord: 1_108_257,
+        };
+        let gap_2 = LinearGenomeLocation::new(&gap_region_2, &TIGR4);
+        let gap_2_len = (gap_2.start_bound as i64 - gap_2.end_bound as i64).abs() as usize;
+        println!("3' Gap\n{}", gap_2);
+
+        // 3' Neighbor
+        let gene_region_right = GenomeRegion {
+            replicon_accession: "NC_003028.3".to_string(),
+            replicon_strand: StrandSense::Reverse,
+            start_index_ord: 1_108_258,
+            end_index_ord: 1_110_717,
+        };
+        let gene_right = LinearGenomeLocation::new(&gene_region_right, &TIGR4);
+        println!("3' Neighbor\n{}", gene_right);
+
+        // Right-Center Relationship
+        let std_right = spatial_relationship(&gene_center, &gene_right);
+        let inv_right = spatial_relationship(&gene_right, &gene_center);
+
+        let std_right_len = match &std_right {
+            SpatialRelationship::Neighbor(x) => match x {
+                NeighborType::FivePrime(x) => *x,
+                NeighborType::ThreePrime(x) => *x,
+            },
+            _ => panic!("ERROR: should be neighbors!"),
+        };
+
+        let inv_right_len = match &inv_right {
+            SpatialRelationship::Neighbor(x) => match x {
+                NeighborType::FivePrime(x) => *x,
+                NeighborType::ThreePrime(x) => *x,
+            },
+            _ => panic!("ERROR: should be neighbors!"),
+        };
+        println!("std: {:?}\ninv: {:?}\n", std_right, inv_right);
+
+        // Test for equivalent gap distance values
+        assert_eq!(std_left_len, inv_left_len);
+        assert_eq!(std_right_len, inv_right_len);
+        assert_eq!(std_left_len, gap_1_len);
+        assert_eq!(std_right_len, gap_2_len);
+        
+        // Test output relationship types
+        assert_eq!(SpatialRelationship::Neighbor(NeighborType::FivePrime(1601)), std_left);
+        assert_eq!(SpatialRelationship::Neighbor(NeighborType::ThreePrime(1601)), inv_left);
+        assert_eq!(SpatialRelationship::Neighbor(NeighborType::ThreePrime(18362)), std_right);
+        assert_eq!(SpatialRelationship::Neighbor(NeighborType::ThreePrime(18362)), inv_right);
+    }
+
+    use std::fs::File;
+    use std::io::{self, BufRead};
+    #[test]
+    #[allow(non_snake_case)]
+    fn test_spatial_relationship_2_genome_locations() {
+
+        // Import manually calculated answer key
+        let ans_key = PathBuf::from("tests/test_assets/T4_spatial_relationship_values.txt");
+        let ans_file = File::open(ans_key).expect("ERROR: could not open 'T4_spatial_relationship_values.txt'");
+        let answers = io::BufReader::new(ans_file).lines();
+        let mut known_relationships: Vec<SpatialRelationship> = Vec::new();
+
+        for line in answers {
+            if line.as_ref().expect("Could not read line.").chars().rev().last() == Some('#') {
+                continue;
+            }
+
+            if let Ok(data) = line {
+                let tmp = data.split(' ').collect::<Vec<&str>>();
+
+                let relationship = match tmp[0] {
+                    "DR" => SpatialRelationship::None,
+                    "5N" => SpatialRelationship::Neighbor(NeighborType::FivePrime(tmp[1].parse::<usize>().unwrap())),
+                    "3N" => SpatialRelationship::Neighbor(NeighborType::ThreePrime(tmp[1].parse::<usize>().unwrap())),
+                    "PE" => SpatialRelationship::Overlap(OverlapType::PerfectEclipse),
+                    "5O" => SpatialRelationship::Overlap(OverlapType::FivePrimeBoundary),
+                    "3O" => SpatialRelationship::Overlap(OverlapType::ThreePrimeBoundary),
+                    "EB" => SpatialRelationship::Overlap(OverlapType::EngulfedBy),
+                    "CO" => SpatialRelationship::Overlap(OverlapType::ContainerOf),
+                     _ => panic!("ERROR: ANSWER KEY CONTAINS INVALID SIGNIFIER."),
+                };
+
+                known_relationships.push(relationship);
+            }
+        }
+
+        // CopY Operators
+        let (operator_seq, table) = build_cop_permutation_table();
+        let operators = SequencePermutations::new("Cop Operator".to_string(), operator_seq, table);
+
+        // Import Genomes
+        let (TIGR4, LACTO) = import_tigr4_lacto_genome();
+
+        // Build genome region for TEST GENE + TEST BUBBLES
+
+        // Regular T4 Gene
+        let t4_test_gene_genome_region = GenomeRegion {
+            replicon_accession: "NC_003028.3".to_string(),
+            replicon_strand: StrandSense::Forward,
+            start_index_ord: 1_083_881,
+            end_index_ord: 1_089_895,
+        };
+
+        // Should be engulfing a gene + partially overlapping two others on each side
+        let test_bubble_genome_region_1 = GenomeRegion {
+            replicon_accession: "NC_003028.3".to_string(),
+            replicon_strand: StrandSense::Reverse,
+            start_index_ord: 1_972_971,
+            end_index_ord: 1_976_500,
+        };
+
+        // Should be completely engulfed by a gene
+        let test_bubble_genome_region_2 = GenomeRegion {
+            replicon_accession: "NC_003028.3".to_string(),
+            replicon_strand: StrandSense::Reverse,
+            start_index_ord: 1_985_150,
+            end_index_ord: 1_987_114,
+        };
+
+        // Linear location for GENE + Artificial Bubble
+        let t4_gene_loc = LinearGenomeLocation::new(&t4_test_gene_genome_region, &TIGR4);
+        let bubble_loc_1 = LinearGenomeLocation::new(&test_bubble_genome_region_1, &TIGR4);
+        let bubble_loc_2 = LinearGenomeLocation::new(&test_bubble_genome_region_2, &TIGR4);
+
+        // Pull a list of elements from genome annotation both near target gene itself and near its antipode
+        let mut global_element_list: Vec<SearchGene> = Vec::new();
+
+        let local_start: usize = 2182;
+        let local_end: usize= 2237;
+        let t4_test_genome = SearchGenome::new(&TIGR4, &operators, None);
+        let lacto_test_genome = SearchGenome::new(&LACTO, &operators, None);
+
+        let mut list_of_local_test_elements = match &t4_test_genome.genes {
+            None => panic!("ERROR: no gene annotations were detected!"),
+            Some(list) => Vec::from_iter(list[local_start..=local_end].iter().cloned())
+        };
+        
+        let antipodal_start: usize = 1;
+        let antipodal_end: usize= 24;
+        let mut list_of_antipodal_test_elements = match &t4_test_genome.genes {
+            None => panic!("ERROR: no gene annotations were detected!"),
+            Some(list) => Vec::from_iter(list[antipodal_start..=antipodal_end].iter().cloned())
+        };
+
+        let bubble_1_genes_start = 4094;
+        let bubble_1_genes_end = 4107;
+        let list_of_bubble_1_elements = match &t4_test_genome.genes {
+            None => panic!("ERROR: no gene annotations were detected!"),
+            Some(list) => Vec::from_iter(list[bubble_1_genes_start..=bubble_1_genes_end].iter().cloned())
+        };
+
+        let bubble_2_genes_start = 4122;
+        let bubble_2_genes_end = 4123;
+        let list_of_bubble_2_elements = match &t4_test_genome.genes {
+            None => panic!("ERROR: no gene annotations were detected!"),
+            Some(list) => Vec::from_iter(list[bubble_2_genes_start..=bubble_2_genes_end].iter().cloned())
+        };
+
+        let lacto_genes_start = 1569;
+        let lacto_genes_end = 1573;
+        let mut list_of_lacto_genes = match &lacto_test_genome.genes {
+            None => panic!("ERROR: no gene annotations were detected!"),
+            Some(list) => Vec::from_iter(list[lacto_genes_start..=lacto_genes_end].iter().cloned())
+        };
+
+        global_element_list.append(&mut list_of_local_test_elements);
+        global_element_list.append(&mut list_of_antipodal_test_elements);
+        global_element_list.append(&mut list_of_lacto_genes);
+
+        for (gene, known_relationship) in global_element_list.iter().zip(known_relationships.iter()) {
+            let relationship = spatial_relationship(&t4_gene_loc, gene.get_linear_location());
+            println!("{:?}", relationship);
+            assert_eq!(*known_relationship, relationship);
+        }
+
+        for (gene, known_relationship) in list_of_bubble_1_elements.iter().zip(known_relationships[85..=98].iter()) {
+            let relationship = spatial_relationship(&bubble_loc_1, gene.get_linear_location());
+            println!("{:?}", relationship);
+            assert_eq!(*known_relationship, relationship);
+        }
+
+        for (gene, known_relationship) in list_of_bubble_2_elements.iter().zip(known_relationships[99..=100].iter()) {
+            let relationship = spatial_relationship(&bubble_loc_2, gene.get_linear_location());
+            println!("{:?}", relationship);
+            assert_eq!(*known_relationship, relationship);
+        }
+    }
+
+    #[test]
+    fn test_spatial_relationship_with_trait() {
+
+    }
     
     #[test]
     #[allow(non_snake_case)]
@@ -1863,7 +2195,7 @@ mod tests {
                 println!("Center vectors are within a distance of {}", DELTA)
             }
 
-            if (self.arc_length - other.arc_length) > DELTA {
+            if (self.arc_length - other.arc_length).abs() > DELTA {
                 println!("Left: {}\nRight: {}\n", self.arc_length, other.arc_length);
                 panic!("Genome Locations do not have the same arc lengths!")
             } else {

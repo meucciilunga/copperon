@@ -87,6 +87,21 @@ pub struct BlastFragment {
 
 impl BlastFragment {
     fn new(input: &BlastDerivedAnnotation) -> BlastFragment {
+
+        // Search module is sensitive to start/end positions of genome features,
+        // so need to adjust BLAST result indicies since they are flipped for 
+        // reverse strand hits, even tho the indicies are references to the fwd strand
+        let start: usize;
+        let end: usize;
+
+        if input.sframe.is_positive() {
+            start = input.sstart;
+            end = input.send;
+        } else {
+            start = input.send;
+            end = input.sstart;
+        };
+
         let location = GenomeRegion {
             replicon_accession: input.sseqid.clone(),
             replicon_strand: if input.sframe.is_positive() {
@@ -96,8 +111,8 @@ impl BlastFragment {
                              } else {
                                  StrandSense::Other
                              },
-            start_index_ord: input.sstart,
-            end_index_ord: input.send,
+            start_index_ord: start,
+            end_index_ord: end,
         };
 
         let length = input.match_length;
@@ -347,8 +362,8 @@ mod tests {
             location: GenomeRegion {
                 replicon_accession: "NZ_CP038808.1".to_string(),
                 replicon_strand: StrandSense::Reverse,
-                start_index_ord: 1446972,
-                end_index_ord: 1445413,
+                start_index_ord: 1445413,
+                end_index_ord: 1446972,
             },
             length: 553,
             pident: 25.136,
@@ -361,8 +376,8 @@ mod tests {
             location: GenomeRegion {
                 replicon_accession: "NZ_AP018338.1".to_string(),
                 replicon_strand: StrandSense::Reverse,
-                start_index_ord: 1762342,
-                end_index_ord: 1760876,
+                start_index_ord: 1760876,
+                end_index_ord: 1762342,
             },
             length: 523,
             pident: 27.533,
@@ -480,8 +495,8 @@ mod tests {
             location: GenomeRegion {
                 replicon_accession: "NZ_AKVY01000001.1".to_string(),
                 replicon_strand: StrandSense::Reverse,
-                start_index_ord: 2014268,
-                end_index_ord: 2012802,
+                start_index_ord: 2012802,
+                end_index_ord: 2014268,
             },
             length: 523,
             pident: 27.916,
@@ -494,8 +509,8 @@ mod tests {
             location: GenomeRegion {
                 replicon_accession: "NZ_AKVY01000001.1".to_string(),
                 replicon_strand: StrandSense::Reverse,
-                start_index_ord: 1527501,
-                end_index_ord: 1525942,
+                start_index_ord: 1525942,
+                end_index_ord: 1527501,
             },
             length: 553,
             pident: 25.136,
@@ -543,8 +558,8 @@ mod tests {
             location: GenomeRegion {
                 replicon_accession: "NZ_CP061021.1".to_string(),
                 replicon_strand: StrandSense::Reverse,
-                start_index_ord: 1527375,
-                end_index_ord: 1526989,
+                start_index_ord: 1526989,
+                end_index_ord: 1527375,
             },
             length: 131,
             pident: 38.931,
@@ -565,8 +580,8 @@ mod tests {
             location: GenomeRegion {
                 replicon_accession: "NZ_AP024837.1".to_string(),
                 replicon_strand: StrandSense::Reverse,
-                start_index_ord: 1823308,
-                end_index_ord: 1822901,
+                start_index_ord: 1822901,
+                end_index_ord: 1823308,
             },
             length: 138,
             pident: 34.783,
