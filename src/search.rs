@@ -28,6 +28,8 @@ enum OverlapType {
     EngulfedBy,
     ContainerOf,
     PerfectEclipse,
+    Crescent,
+    CrescentGap,
 }
 
 enum GenomeObject<'blast, 'genome> {
@@ -595,6 +597,7 @@ fn spatial_relationship(location_A: &LinearGenomeLocation, location_B: &LinearGe
     let different_replicons = (A.replicon.accession_id != B.replicon.accession_id);
     let no_overlap = Δ_arc_length >= (A_radius + B_radius);
     let engulfing_overlap = f64::max(A_radius, B_radius) > (Δ_arc_length + f64::min(A_radius, B_radius));
+    let crescent = (2.0 * PI * replicon_radius - f64::min(2.0*A_radius, 2.0*B_radius)) < f64::max(2.0*A_radius, 2.0*B_radius);
 
     // Apply rules of the algorithm
     let output = if different_replicons {
@@ -613,6 +616,12 @@ fn spatial_relationship(location_A: &LinearGenomeLocation, location_B: &LinearGe
         } else { 
             // AxB < 0 => center of B is to the RIGHT of center of A
             SpatialRelationship::Neighbor(NeighborType::FivePrime(arc_distance))
+        }
+    } else if crescent {
+        if A_radius > B_radius {
+            SpatialRelationship::Overlap(OverlapType::CrescentGap)
+        } else {
+            SpatialRelationship::Overlap(OverlapType::Crescent)
         }
     } else if engulfing_overlap {
         if A_radius > B_radius {
@@ -1953,6 +1962,8 @@ mod tests {
                     "3O" => SpatialRelationship::Overlap(OverlapType::ThreePrimeBoundary),
                     "EB" => SpatialRelationship::Overlap(OverlapType::EngulfedBy),
                     "CO" => SpatialRelationship::Overlap(OverlapType::ContainerOf),
+                    "CR" => SpatialRelationship::Overlap(OverlapType::Crescent),
+                    "CG" => SpatialRelationship::Overlap(OverlapType::CrescentGap),
                      _ => panic!("ERROR: ANSWER KEY CONTAINS INVALID SIGNIFIER."),
                 };
 
@@ -1967,7 +1978,15 @@ mod tests {
         // Import Genomes
         let (TIGR4, LACTO) = import_tigr4_lacto_genome();
 
-        // Build genome region for TEST GENE + TEST BUBBLES
+        // Build genome region for TEST GENE + DISCONT. GENE + TEST BUBBLES
+
+        // T4 Region over the discontinuity
+        let t4_cross_discontinuity_genome_region = GenomeRegion {
+            replicon_accession: "NC_003028.3".to_string(),
+            replicon_strand: StrandSense::Reverse,
+            start_index_ord: 2_159_000,
+            end_index_ord: 2295,
+        };
 
         // Regular T4 Gene
         let t4_test_gene_genome_region = GenomeRegion {
@@ -1995,17 +2014,18 @@ mod tests {
 
         // Linear location for GENE + Artificial Bubble
         let t4_gene_loc = LinearGenomeLocation::new(&t4_test_gene_genome_region, &TIGR4);
+        let t4_cross_loc = LinearGenomeLocation::new(&t4_cross_discontinuity_genome_region, &TIGR4);
         let bubble_loc_1 = LinearGenomeLocation::new(&test_bubble_genome_region_1, &TIGR4);
         let bubble_loc_2 = LinearGenomeLocation::new(&test_bubble_genome_region_2, &TIGR4);
 
         // Pull a list of elements from genome annotation both near target gene itself and near its antipode
         let mut global_element_list: Vec<SearchGene> = Vec::new();
 
-        let local_start: usize = 2182;
-        let local_end: usize= 2237;
         let t4_test_genome = SearchGenome::new(&TIGR4, &operators, None);
         let lacto_test_genome = SearchGenome::new(&LACTO, &operators, None);
 
+        let local_start: usize = 2182;
+        let local_end: usize= 2237;
         let mut list_of_local_test_elements = match &t4_test_genome.genes {
             None => panic!("ERROR: no gene annotations were detected!"),
             Some(list) => Vec::from_iter(list[local_start..=local_end].iter().cloned())
@@ -2016,6 +2036,21 @@ mod tests {
         let mut list_of_antipodal_test_elements = match &t4_test_genome.genes {
             None => panic!("ERROR: no gene annotations were detected!"),
             Some(list) => Vec::from_iter(list[antipodal_start..=antipodal_end].iter().cloned())
+        };
+
+        let discontinuity_start_1: usize = 4461;
+        let discontinuity_end_1: usize = 4466;
+        let discontinuity_start_2: usize = 0;
+        let discontinuity_end_2: usize = 6;
+        let list_of_cross_discontinuity_element = match &t4_test_genome.genes {
+            None => panic!("ERROR: no gene annotations were detected!"),
+            Some(list) => {
+                let mut storage = Vec::new();
+                storage.append(&mut Vec::from_iter(list[discontinuity_start_1..=discontinuity_end_1].iter().cloned()));
+                storage.append(&mut Vec::from_iter(list[discontinuity_start_2..=discontinuity_end_2].iter().cloned()));
+
+                storage
+            }
         };
 
         let bubble_1_genes_start = 4094;
@@ -2060,6 +2095,17 @@ mod tests {
             println!("{:?}", relationship);
             assert_eq!(*known_relationship, relationship);
         }
+
+        for (gene, known_relationship) in list_of_cross_discontinuity_element.iter().zip(known_relationships[101..=113].iter()) {
+            let relationship = spatial_relationship(&t4_cross_loc, gene.get_linear_location());
+            println!("{:?}\n", relationship);
+            assert_eq!(*known_relationship, relationship);
+        }
+
+        // Test crescent gap
+        let relationship =  spatial_relationship(&list_of_cross_discontinuity_element[6].linear_location, &t4_cross_loc);
+        assert_eq!(known_relationships[114], relationship);
+
     }
 
     #[test]
