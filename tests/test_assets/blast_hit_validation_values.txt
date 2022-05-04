@@ -1,0 +1,8 @@
+CopA CupA CopY
+CopY
+CupA CopY
+CopA CupA
+CopA
+CopA
+CopY
+CopY

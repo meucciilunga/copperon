@@ -751,7 +751,7 @@ mod tests {
     use super::*;
     use crate::cop_operon_specific::build_cop_permutation_table;
     use crate::permutations::SequencePermutations;
-    use crate::genome::{self, GenomeRegion, FeatureType};
+    use crate::genome::{self, GenomeRegion, FeatureType, BlastAssociationType};
     use crate::import::{self, AssemblyMetadata};
     use std::path::PathBuf;
     use std::{collections::HashMap, f64::consts::E};
@@ -2107,15 +2107,36 @@ mod tests {
         assert_eq!(known_relationships[114], relationship);
 
     }
-
-    #[test]
-    fn test_spatial_relationship_with_trait() {
-
-    }
     
     #[test]
     #[allow(non_snake_case)]
     fn timing_diagnostic_and_BLAST_linker_test() {
+
+        // Load BLAST validation data
+        let validation_path = PathBuf::from("tests/test_assets/blast_hit_validation_values.txt");
+        let validation_file = File::open(validation_path).expect("ERROR: could not open 'blast_hit_validation_values.txt'");
+        let lines = io::BufReader::new(validation_file).lines();
+        let mut prevalidated_assocs: Vec<HashSet<BlastAssociationType>> = Vec::new();
+
+        for line in lines {
+            if let Ok(x) = line {
+                let mut tmp_set: HashSet<BlastAssociationType> = HashSet::new();
+
+                for association in x.split(' ') {
+                    let tmp = match association {
+                        "CopA" => BlastAssociationType::CopA,
+                        "CupA" => BlastAssociationType::CupA,
+                        "CopY" => BlastAssociationType::CopY,
+                        "CopZ" => BlastAssociationType::CopZ,
+                        _ => panic!("ERROR: Unrecognized BlastType."),
+                    };
+                    
+                    tmp_set.insert(tmp);
+                }
+
+                prevalidated_assocs.push(tmp_set);
+            }
+        }
         
         // Load BLAST hits
         let now = SystemTime::now();
@@ -2152,37 +2173,39 @@ mod tests {
         let LACTO_search = SearchGenome::new(&LACTO, &operators, Some(&BLAST_tables));
         println!("Build LACTO search genome struct time: {}ms", now.elapsed().unwrap().as_millis()); 
 
-        // 
-        for gene in TIGR4_search.genes.unwrap() {
+        // T4 Genome Blast Hit Validation
+        for (gene, validated) in TIGR4_search.genes.unwrap()
+                                                   .iter()
+                                                   .filter(|&x| x.blast_association != None && x.gene.feature_type != FeatureType::Gene)
+                                                   .zip(prevalidated_assocs[0..=5].iter()) {
+            
+            let test_assoc = gene.blast_association.as_ref().unwrap();
 
-            if gene.gene.feature_type == FeatureType::Gene {
-                continue;
-            }
+            println!();
+            println!("Valid: {:?}", test_assoc);
+            println!("Test: {:?}", validated);
+            println!();
+            
+            assert_eq!(validated, test_assoc);
+        }
 
-            if let Some(x) = gene.blast_association {
-                println!("{}\t{:?}\t{:?}", gene.linear_location.start_bound+1, gene.gene.feature_type, x);
-            }
+        // LACTO Genome Blast Hit Validation
+        for (gene, validated) in LACTO_search.genes.unwrap()
+        .iter()
+        .filter(|&x| x.blast_association != None && x.gene.feature_type != FeatureType::Gene)
+        .zip(prevalidated_assocs[6..].iter()) {
+            let test_assoc = gene.blast_association.as_ref().unwrap();
+
+            println!();
+            println!("Valid: {:?}", validated);
+            println!("Test: {:?}", test_assoc);
+            println!();
+
+            assert_eq!(validated, test_assoc);
         }
 
         println!("\n-----\n");
-
-        // 
-        for gene in LACTO_search.genes.unwrap() {
-
-            if gene.gene.feature_type == FeatureType::Gene {
-                continue;
-            }
-
-            if let Some(x) = gene.blast_association {
-                println!("{}\t{:?}\t{:?}", gene.linear_location.start_bound+1, gene.gene.feature_type, x);
-            }
-        }
     }
-
-
-
-
-
 
 
     // HELPER FUNCTIONS
