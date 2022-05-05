@@ -32,6 +32,7 @@ enum OverlapType {
     CrescentGap,
 }
 
+#[derive(Debug, Clone, PartialEq)]
 enum GenomeObject<'blast, 'genome> {
     Gene(SearchGene<'genome>),
     Operator(Operator<'genome>),
@@ -220,7 +221,7 @@ impl<'genome> CircularGenomeLocation<'genome> {
         let center_unit_vec: GenomeVector;
         let arc_length: f64;
         const ZERO: f64 = 0.0;
-
+        
         if arc_orientation > ZERO {
             center_unit_vec = (&start_unit_vec + &end_unit_vec).normalize();
             arc_length = start_unit_vec.angle(&end_unit_vec) * replicon_radius;
@@ -358,6 +359,7 @@ struct SearchGene<'genome> {
     blast_association: Option<HashSet<genome::BlastAssociationType>>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
 struct SearchBlastFragment<'blast, 'genome> {
     blast: &'blast BlastFragment,
     linear_location: LinearGenomeLocation<'genome>,
@@ -644,10 +646,14 @@ fn spatial_relationship(location_A: &LinearGenomeLocation, location_B: &LinearGe
 
 fn search_bubble<'genome, T: LocateOnLinearGenome>(query: &'genome T, search_radius: usize) -> LinearGenomeLocation {
     let mut proto_bubble = query.get_linear_location().clone();
-    let start_i64: i64 = (proto_bubble.start_bound as i64) - (search_radius as i64);
-   
-    proto_bubble.start_bound = start_i64.rem_euclid(proto_bubble.replicon.len as i64) as usize;
-    proto_bubble.end_bound += search_radius;
+    let proto_bubble_len = CircularGenomeLocation::new(&proto_bubble).arc_length.round() as usize;
+
+    if !(proto_bubble_len + 2 * search_radius >= proto_bubble.replicon.len) {
+        let start_i64: i64 = (proto_bubble.start_bound as i64) - (search_radius as i64);
+        
+        proto_bubble.start_bound = start_i64.rem_euclid(proto_bubble.replicon.len as i64) as usize;
+        proto_bubble.end_bound += search_radius;
+    }
 
     proto_bubble
 }
@@ -2107,7 +2113,7 @@ mod tests {
         assert_eq!(known_relationships[114], relationship);
 
     }
-    
+
     #[test]
     #[allow(non_snake_case)]
     fn timing_diagnostic_and_BLAST_linker_test() {
@@ -2203,10 +2209,199 @@ mod tests {
 
             assert_eq!(validated, test_assoc);
         }
-
         println!("\n-----\n");
     }
 
+    #[test]
+    #[allow(non_snake_case)]
+    fn test_search_bubble_generator() {
+
+        // CopY Operators
+        let (operator_seq, table) = build_cop_permutation_table();
+        let operators = SequencePermutations::new("Cop Operator".to_string(), operator_seq, table);
+
+        // Import Genomes -- runtime-values are measured in the helper function itself
+        let (TIGR4, LACTO) = import_tigr4_lacto_genome(); 
+
+        // Import Search Bubble validation data
+        let validation_path = "tests/test_assets/search_bubble_validation.txt";
+        let validation_file = File::open(validation_path).expect("ERROR: search bubble validation file is missing.");
+        let lines = io::BufReader::new(validation_file).lines();
+        let mut validated_vals: Vec<CircularGenomeLocation> = Vec::new();
+
+        for line in lines {
+            if let Ok(text_data) = line {
+                let mut tmp = text_data.split(' ').map(|x| x.to_string()).collect::<Vec<String>>();
+                let (genome, dir, left, right) = (tmp.remove(0), tmp.remove(0), tmp.remove(0).parse::<usize>().unwrap(), tmp.remove(0).parse::<usize>().unwrap());
+
+                let replicon = match genome.as_str() {
+                    "L" => LACTO.replicons.get(&"NC_002662.1".to_string()).unwrap(),
+                    "S" => TIGR4.replicons.get(&"NC_003028.3".to_string()).unwrap(),
+                     _  => panic!("ERROR: INVALID REPLICON IDENTIFIER."),
+                };
+
+                let strand = match dir.as_str() {
+                    "F" => StrandSense::Forward,
+                    "R" => StrandSense::Reverse,
+                     _  => panic!("ERROR: INVALID STRAND IDENTIFIER."),
+                };
+
+                let loc_tmp = LinearGenomeLocation {
+                    replicon,
+                    strand,
+                    start_bound: left,
+                    end_bound: right,
+                };
+
+                let loc_tmp = CircularGenomeLocation::new(&loc_tmp);
+
+                validated_vals.push(loc_tmp);
+
+            } else {
+                panic!("ERROR: could not parse data from search bubble validation file.")
+            };
+        }
+
+        // Parse genomes
+        let TIGR4_search = SearchGenome::new(&TIGR4, &operators, None);
+        let LACTO_search = SearchGenome::new(&LACTO, &operators, None);
+
+        // Pull specific genes from genomes
+        let mut target_genes = TIGR4_search.genes.as_ref()
+                                                 .unwrap()
+                                                 .iter()
+                                                 .take(5)
+                                                 .filter(|x| x.gene.feature_type != FeatureType::Gene)
+                                                 .map(|x| x.clone())
+                                                 .collect::<Vec<SearchGene>>();
+        let mut last_genes = TIGR4_search.genes.as_ref()
+                                               .unwrap()
+                                               .iter()
+                                               .rev()
+                                               .take(4)
+                                               .filter(|x| x.gene.feature_type != FeatureType::Gene)
+                                               .map(|x| x.clone())
+                                               .collect::<Vec<SearchGene>>();
+        target_genes.append(&mut last_genes);
+
+        let mut first_lacto_genes = LACTO_search.genes.as_ref()
+                                                      .unwrap()
+                                                      .iter()
+                                                      .map(|x| x.clone())
+                                                      .collect::<Vec<SearchGene>>();
+        target_genes.append(&mut first_lacto_genes);
+
+        // Compare test search bubbles to actual search bubbles
+        const T4_BUBBLE_RADIUS: usize = 2121;
+        const LACTO_BUBBLE_RADIUS: usize = 100;
+
+        println!("");
+        for (index, (test, validated)) in target_genes.iter().zip(validated_vals[..5].iter()).enumerate() {
+            let circ_bubble = CircularGenomeLocation::new(&search_bubble(test, T4_BUBBLE_RADIUS));
+
+            println!("\n[{}]", index+1);
+            println!("Test Subject\n{}", test.get_linear_location());
+            println!("Test Bubble\n{}", circ_bubble);
+            println!("Validated Bubble\n{}", validated);
+
+            validated.test_compare(&circ_bubble);
+        }
+
+        println!("");
+        for (index, (test, validated)) in target_genes[2692+5..=2698+6].iter().filter(|x| x.gene.feature_type == FeatureType::CDS).zip(validated_vals[5..].iter()).enumerate() {
+            let circ_bubble = CircularGenomeLocation::new(&search_bubble(test, LACTO_BUBBLE_RADIUS));
+
+            println!("\n[{}]", index+1);
+            println!("Test Subject\n{}", test.get_linear_location());
+            println!("Test Bubble\n{}", circ_bubble);
+            println!("Validated Bubble\n{}", validated);
+
+            validated.test_compare(&circ_bubble);
+        }
+    }
+
+    #[test]
+    #[allow(non_snake_case)]
+    fn find_nearby_test() {
+
+        // Import manually calculated answer key
+        let ans_key = PathBuf::from("tests/test_assets/nearby_validation.txt");
+        let ans_file = File::open(ans_key).expect("ERROR: could not open 'nearby_validation.txt'");
+        let answers = io::BufReader::new(ans_file).lines();
+        let mut known_relationships: Vec<SpatialRelationship> = Vec::new();
+
+        for line in answers {
+            if line.as_ref().expect("Could not read line.").chars().rev().last() == Some('#') {
+                continue;
+            }
+
+            if let Ok(data) = line {
+                let tmp = data.split(' ').collect::<Vec<&str>>();
+
+                let relationship = match tmp[0] {
+                    "DR" => SpatialRelationship::None,
+                    "5N" => SpatialRelationship::Neighbor(NeighborType::FivePrime(tmp[1].parse::<usize>().unwrap())),
+                    "3N" => SpatialRelationship::Neighbor(NeighborType::ThreePrime(tmp[1].parse::<usize>().unwrap())),
+                    "PE" => SpatialRelationship::Overlap(OverlapType::PerfectEclipse),
+                    "5O" => SpatialRelationship::Overlap(OverlapType::FivePrimeBoundary),
+                    "3O" => SpatialRelationship::Overlap(OverlapType::ThreePrimeBoundary),
+                    "EB" => SpatialRelationship::Overlap(OverlapType::EngulfedBy),
+                    "CO" => SpatialRelationship::Overlap(OverlapType::ContainerOf),
+                    "CR" => SpatialRelationship::Overlap(OverlapType::Crescent),
+                    "CG" => SpatialRelationship::Overlap(OverlapType::CrescentGap),
+                        _ => panic!("ERROR: ANSWER KEY CONTAINS INVALID SIGNIFIER."),
+                };
+
+                known_relationships.push(relationship);
+            }
+        }
+
+        // Import Genomes -- runtime-values are measured in the helper function itself
+        let (TIGR4, LACTO) = import_tigr4_lacto_genome(); 
+
+        // CopY Operators
+        let (operator_seq, table) = build_cop_permutation_table();
+        let operators = SequencePermutations::new("Cop Operator".to_string(), operator_seq, table);
+
+        // Parse genomes
+        let TIGR4_search = SearchGenome::new(&TIGR4, &operators, None);
+        let T4_genome_objects = TIGR4_search.genes.as_ref()
+                                                  .unwrap()
+                                                  .iter()
+                                                  // Adding filter here, but not on LACTO, since this one is closer to start;
+                                                  // leave 'CDS' filter off of the LACTO iterator cause need to know item's location
+                                                  // which is harder to do after filtering.
+                                                  .filter(|&x| x.gene.feature_type == FeatureType::CDS)
+                                                  .map(|x| GenomeObject::Gene(x.clone())).collect::<Vec<GenomeObject>>();
+        let T4_genes = TIGR4_search.genes.unwrap()
+                                         .iter()
+                                         .filter(|&x| x.gene.feature_type == FeatureType::CDS)
+                                         .map(|x| x.clone())
+                                         .collect::<Vec<SearchGene>>();
+
+        let LACTO_search = SearchGenome::new(&LACTO, &operators, None);
+        let LACTO_genome_objects = LACTO_search.genes.as_ref()
+                                                     .unwrap()
+                                                     .iter()
+                                                     .map(|x| GenomeObject::Gene(x.clone())).collect::<Vec<GenomeObject>>();
+        let LACTO_genes = LACTO_search.genes.unwrap();
+
+        // Verify Nearby T4 Elements
+        let nearby_T4 = find_nearby_elements(&T4_genes[0], &T4_genome_objects, 4000).unwrap();
+        for (item, known_relationship) in nearby_T4.iter().zip(known_relationships.iter()) {
+            if let GenomeObject::Gene(_) = item.0 {
+                assert_eq!(*known_relationship, item.1)
+            }
+        }
+
+        // Verify Nearby LACTO Elements
+        let nearby_LACTO = find_nearby_elements(&LACTO_genes[1041], &LACTO_genome_objects, 618).unwrap();
+        for (item, known_relationship) in nearby_LACTO.iter().zip(known_relationships[11..].iter()) {
+            if let GenomeObject::Gene(_) = item.0 {
+                assert_eq!(*known_relationship, item.1);
+            }
+        }
+    }
 
     // HELPER FUNCTIONS
     impl GenomeVector {
@@ -2310,7 +2505,11 @@ mod tests {
             let parent_id = &self.replicon.accession_id;
             let start = self.start_bound;
             let end = self.end_bound;
-            let element_len = (end as i64 - start as i64).abs();
+            let element_len = if end > start {
+                (end as i64 - start as i64).abs()
+            } else {
+                (self.replicon.len as i64) - (end as i64 - start as i64).abs()
+            };
 
             write!(f, "Linear Location\nReplicon: {}\nStrand: {}\nStart Bound: {}\nEnd Bound: {}\nFeature Length: {}\n",
                     parent_id, strand, start, end, element_len)
