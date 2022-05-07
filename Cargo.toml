@@ -10,3 +10,6 @@ num_cpus = "1.13.0"
 
 [profile.test]
 opt-level=3
+
+[profile.dev]
+opt-level=3

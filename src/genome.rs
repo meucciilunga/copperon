@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use crate::import::{self, ProtoGenome, AssemblyMetadata, ProtoReplicon,
                     ProtoRepliconType, AnnotationEntry, BlastDerivedAnnotation};
 use std::{collections::{HashMap, HashSet}, path::PathBuf};
@@ -16,6 +14,8 @@ pub trait ReverseComplement: GetSequence {
         let seq = {
             let na_complement_remapping = |x| {
                 match x {
+
+                    // Standard fasta characters with reasonable RC interpretation
                     'A' => 'T',
                     'C' => 'G',
                     'G' => 'C',
@@ -24,8 +24,24 @@ pub trait ReverseComplement: GetSequence {
                     'R' => 'Y',
                     'Y' => 'R',
                     'N' => 'N',
-                     _  =>  panic!("ERROR: replicon sequence contains invalid character."),
-                    // Any other characters are turned back into themselves
+
+                    // Any other standard FASTA characters are turned back into themselves
+                    'K' => 'K',
+                    'M' => 'M',
+                    'S' => 'S',
+                    'W' => 'W',
+                    'B' => 'B',
+                    'D' => 'D',
+                    'H' => 'H',
+                    'V' => 'V',
+                    '-' => '-',
+
+                    // Any non-standard FASTA characters panic
+                     _  =>  {   
+                                println!("{}", x);
+                                panic!("ERROR: replicon sequence contains invalid character.")
+                            },
+                    
                 }
             };
 
@@ -642,7 +658,7 @@ mod tests {
 
         // Parse genome annotation file
         let test_blast_results_file = PathBuf::from("tests/test_assets/GCF_000009725.1_ASM972v1/GCF_000009725.1_ASM972v1_genomic.gff");
-        let test_annotations = import::parse_genome_annotation(test_blast_results_file);
+        let test_annotations = import::parse_genome_annotation(&test_blast_results_file);
 
         let test_gene_1 = Gene::from_annotation_entry(&test_annotations[0]);
         let test_gene_2 = Gene::from_annotation_entry(&test_annotations[6738]);

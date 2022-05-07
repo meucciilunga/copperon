@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 use std::collections::HashMap;
 
 // Given a scaffold sequence and a remapping table defined for each target substitutable
@@ -112,7 +111,7 @@ mod test {
     use std::path::PathBuf;
     use std::fs::File;
     use std::collections::HashSet;
-    use crate::cop_operon_specific;
+    use crate::cop_specific_analysis;
 
     #[test]
     fn next_site_test_1() {
@@ -259,7 +258,7 @@ mod test {
         };
 
         // Actual
-        let (test_seq, permutation_table) = cop_operon_specific::build_cop_permutation_table();
+        let (test_seq, permutation_table) = cop_specific_analysis::build_cop_permutation_table();
         let actual_result: HashSet<String> = full_seq_permutator(test_seq, permutation_table).into_iter().collect();
 
         assert_eq!(actual_result, expected_result);

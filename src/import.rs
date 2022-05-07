@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::{self, Read, BufRead};
@@ -47,7 +46,7 @@ pub fn import_database_summary(summary_file_path: PathBuf) -> HashMap<String, As
     database_metadata_table
 }
 
-pub fn parse_genome_sequence(assembly_name: &String, genome_fasta_file: PathBuf) -> ProtoGenome {
+pub fn parse_genome_sequence(assembly_name: &String, genome_fasta_file: &PathBuf) -> ProtoGenome {
     
     // Read-in genome sequence file
     let file = File::open(genome_fasta_file).expect("ERROR: could not open genome sequence file!");
@@ -151,7 +150,7 @@ pub fn parse_genome_sequence(assembly_name: &String, genome_fasta_file: PathBuf)
     }
 }
 
-pub fn parse_genome_annotation(genome_annotation_file: PathBuf) -> Vec<AnnotationEntry> {
+pub fn parse_genome_annotation(genome_annotation_file: &PathBuf) -> Vec<AnnotationEntry> {
 
     // Storage logistics
     let mut annotation_data: Vec<AnnotationEntry> = Vec::new();
@@ -237,7 +236,16 @@ impl AssemblyMetadata {
     fn new(entry_data: Vec<String>) -> AssemblyMetadata {
 
         let assembly_accession = entry_data[0].to_string();
-        let assembly_name = entry_data[15].to_string();
+        let assembly_name = entry_data[15].to_string()
+                                          .replace("  ", " ")
+                                          .replace(" ", "_")
+                                          .replace("#", "_")
+                                          .replace("/", "_")
+                                          .replace("(", "_")
+                                          .replace(")", "_");
+        // RefSeq/GenBank metadata files occasionally don't match assembly
+        // directory names exactly due to use of special characters in assembly
+        // name, so have to make these replacements in order to compensate for that ^
         let subdir_name = format!("{}_{}", assembly_accession, assembly_name);
 
         AssemblyMetadata {
@@ -484,7 +492,7 @@ mod tests {
     fn test_parse_genome_sequence_1() {
         let test_file = "tests/test_assets/GCA_000152665.1_ASM15266v1/GCA_000152665.1_ASM15266v1_genomic.fna";
         let test_file = PathBuf::from(test_file);
-        let test_genome = parse_genome_sequence(&"GCA_000152665.1_ASM15266v1".to_string(), test_file);
+        let test_genome = parse_genome_sequence(&"GCA_000152665.1_ASM15266v1".to_string(), &test_file);
 
         let confirmation_dir = PathBuf::from("tests/test_assets/preprocessed_test_genomes/GCA_000152665.1_ASM15266v1");
         let actual_genome = parse_confirmation_genome_dir(confirmation_dir);
@@ -503,7 +511,7 @@ mod tests {
     fn test_parse_genome_sequence_2() {
         let test_file = "tests/test_assets/GCF_000009725.1_ASM972v1/GCF_000009725.1_ASM972v1_genomic.fna";
         let test_file = PathBuf::from(test_file);
-        let test_genome = parse_genome_sequence(&"GCF_000009725.1_ASM972v1".to_string(), test_file);
+        let test_genome = parse_genome_sequence(&"GCF_000009725.1_ASM972v1".to_string(), &test_file);
 
         let confirmation_dir = PathBuf::from("tests/test_assets/preprocessed_test_genomes/GCF_000009725.1_ASM972v1");
         let actual_genome = parse_confirmation_genome_dir(confirmation_dir);
@@ -546,7 +554,7 @@ mod tests {
     fn test_parse_genome_sequence_3() {
         let test_file = "tests/test_assets/GCF_014107515.1_ASM1410751v1/GCF_014107515.1_ASM1410751v1_genomic.fna";
         let test_file = PathBuf::from(test_file);
-        let test_genome = parse_genome_sequence(&"GCF_014107515.1_ASM1410751v1".to_string(), test_file);
+        let test_genome = parse_genome_sequence(&"GCF_014107515.1_ASM1410751v1".to_string(), &test_file);
 
         let confirmation_dir = PathBuf::from("tests/test_assets/preprocessed_test_genomes/GCF_014107515.1_ASM1410751v1");
         let actual_genome = parse_confirmation_genome_dir(confirmation_dir);
@@ -571,7 +579,7 @@ mod tests {
         // SINCE CONFIRMATION INPUT IS ALL UPPERCASE
         let test_file = "tests/test_assets/GCF_016889785.1_ASM1688978v1/GCF_016889785.1_ASM1688978v1_genomic.fna";
         let test_file = PathBuf::from(test_file);
-        let test_genome = parse_genome_sequence(&"GCF_016889785.1_ASM1688978v1".to_string(), test_file);
+        let test_genome = parse_genome_sequence(&"GCF_016889785.1_ASM1688978v1".to_string(), &test_file);
 
         let confirmation_dir = PathBuf::from("tests/test_assets/preprocessed_test_genomes/GCF_016889785.1_ASM1688978v1");
         let actual_genome = parse_confirmation_genome_dir(confirmation_dir);
@@ -594,7 +602,7 @@ mod tests {
     fn test_parse_genome_sequence_5() {
         let test_file = "tests/test_assets/GCF_016889785.1_ASM1688978v1/GCF_016889785.1_ASM1688978v1_genomic.fna";
         let test_file = PathBuf::from(test_file);
-        let test_genome = parse_genome_sequence(&"GCF_016889785.1_ASM1688978v1".to_string(), test_file);
+        let test_genome = parse_genome_sequence(&"GCF_016889785.1_ASM1688978v1".to_string(), &test_file);
 
         let confirmation_dir = PathBuf::from("tests/test_assets/preprocessed_test_genomes/GCF_000009725.1_ASM972v1");
         let actual_genome = parse_confirmation_genome_dir(confirmation_dir);
@@ -606,7 +614,7 @@ mod tests {
     fn test_parse_genome_sequence_6() {
         let test_file = "tests/test_assets/GCF_000009725.1_ASM972v1/GCF_000009725.1_ASM972v1_genomic.fna";
         let test_file = PathBuf::from(test_file);
-        let expected_genome = parse_genome_sequence(&"GCF_000009725.1_ASM972v1_missing_files".to_string(), test_file);
+        let expected_genome = parse_genome_sequence(&"GCF_000009725.1_ASM972v1_missing_files".to_string(), &test_file);
 
         let confirmation_dir = PathBuf::from("tests/test_assets/preprocessed_test_genomes/GCF_000009725.1_ASM972v1_missing_files");
         let actual_genome = parse_confirmation_genome_dir(confirmation_dir);
@@ -618,7 +626,7 @@ mod tests {
     fn test_parse_annotation_1() {
         let test_file = "tests/test_assets/GCF_000009725.1_ASM972v1/GCF_000009725.1_ASM972v1_genomic.gff";
         let test_file = PathBuf::from(test_file);
-        let parsed_annotation_entries = parse_genome_annotation(test_file);
+        let parsed_annotation_entries = parse_genome_annotation(&test_file);
 
         // Manually defined database entries
         let expected_entry_1 = AnnotationEntry {
@@ -692,7 +700,7 @@ mod tests {
 
     #[test]
     fn test_parse_blast_1() {
-        let test_file = "blast/results/CopZ-TcrZ_blast_result.txt";
+        let test_file = "tests/test_assets/CopZ-TcrZ_blast_result.txt";
         let test_file = PathBuf::from(test_file);
         let parsed_blast_entries = parse_annotations_from_blast_results(test_file);
 
@@ -764,4 +772,28 @@ mod tests {
         assert_eq!(parsed_blast_entries[637], expected_2);
         assert_eq!(parsed_blast_entries[158], expected_1);
     }
+
+    use crate::cop_specific_analysis;
+    #[test]
+    fn test_assembly_names_in_table_match_directory_names() {
+        
+        // Define primary file paths
+        let path_to_database = PathBuf::from("/run/media/katanga/SSD2/organized_prokaryotic_database/annotated");
+        let refseq = PathBuf::from("database/data_assets/assembly_summary_refseq_updated.txt");
+        let genbank = PathBuf::from("database/data_assets/assembly_summary_genbank.txt");
+        let blast_data = cop_specific_analysis::build_list_of_blast_result_files("blast/results");
+        
+        // Load shared resources
+        let (metadata, _, _) = cop_specific_analysis::load_resources(refseq, genbank, Some(blast_data));
+
+        // Build task list from list of genome assembly directories
+        let genome_dirs = cop_specific_analysis::build_list_of_genome_directories(path_to_database);
+
+        for item in genome_dirs.iter() {
+            let asm_name = item.file_name().and_then(|x| x.to_str()).map(|x| x.to_string()).unwrap();
+            let attempt = metadata.get(&asm_name);
+            attempt.unwrap();
+        }
+    }
+
 }

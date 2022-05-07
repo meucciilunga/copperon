@@ -1,28 +1,44 @@
-#![allow(dead_code)]
-//#![allow(unused_imports)]
-
 use crate::genome::{self, Gene, Genome, GenomeRegion, StrandSense, BlastFragment,
                     Replicon, BlastHitsTable};
 use crate::permutations::SequencePermutations;
 use std::f64::consts::PI;
 use std::ops::{Add, Sub};
 use std::collections::{HashSet, HashMap};
+use std::fmt::Display;
 
 #[derive(Debug, Clone, PartialEq)]
-enum SpatialRelationship {
+pub enum SpatialRelationship {
     Neighbor(NeighborType),
     Overlap(OverlapType),
     None,
 }
 
+impl SpatialRelationship {
+    pub fn distance(&self) -> usize {
+        match self {
+            SpatialRelationship::Neighbor(x) => x.distance(),
+            _ => 0,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
-enum NeighborType {
+pub enum NeighborType {
     FivePrime(usize),
     ThreePrime(usize),
 }
 
+impl NeighborType {
+    pub fn distance(&self) -> usize {
+        match *self {
+            NeighborType::FivePrime(x) => x,
+            NeighborType::ThreePrime(x) => x,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
-enum OverlapType {
+pub enum OverlapType {
     FivePrimeBoundary,
     ThreePrimeBoundary,
     EngulfedBy,
@@ -40,7 +56,7 @@ enum GenomeObject<'blast, 'genome> {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-enum OperatorDimension {
+pub enum OperatorDimension {
     Double,
     Single,
 }
@@ -112,13 +128,6 @@ impl GenomeVector {
         pdt
     }
 
-    // Returns dot product of two vectors where A⋅B == A.dot(B)
-    fn dot(&self, other: &Self) -> f64 {
-        let a1b1 = self.0 * other.0;
-        let a2b2 = self.1 * other.1;
-        a1b1 + a2b2
-    }
-
     // Returns shortest angle (in radians) between two vectors
     fn angle(&self, other: &Self) -> f64 {
 
@@ -167,11 +176,11 @@ impl GenomeVector {
 // or linear) only really makes sense when tied to a specific genome. It wouldn't  
 // make sense to have a location pointing to a place on an object that doesn't exist
 #[derive(Debug, Clone, PartialEq)]
-struct LinearGenomeLocation<'genome> {
-    replicon: &'genome Replicon,
-    strand: StrandSense,
-    start_bound: usize,
-    end_bound: usize,
+pub struct LinearGenomeLocation<'genome> {
+    pub replicon: &'genome Replicon,
+    pub strand: StrandSense,
+    pub start_bound: usize,
+    pub end_bound: usize,
 }
 
 impl<'genome> LinearGenomeLocation<'genome> {
@@ -251,15 +260,16 @@ impl<'genome> CircularGenomeLocation<'genome> {
 
 // Implement light wrappers around elements from Genome module to facilitate easier implementation 
 // of LocateOnLinearGenome trait
-struct SearchGenome<'genome, 'blast> {
-    genome:     &'genome Genome,
-    genes:      Option<Vec<SearchGene<'genome>>>,
-    operators:  Option<Vec<Operator<'genome>>>,
+pub struct SearchGenome<'genome, 'blast> {
+    pub genome:     &'genome Genome,
+    pub genes:      Option<Vec<SearchGene<'genome>>>,
+    pub operators:  Option<Vec<Operator<'genome>>>,
     fragments:  Option<Vec<SearchBlastFragment<'blast, 'genome>>>
 }
 
 impl<'genome, 'blast, 'seq> SearchGenome<'genome, 'blast> {
-    fn new(genome: &'genome Genome, permutations: &'seq SequencePermutations, blast_tables: Option<&'blast Vec<BlastHitsTable>>) -> SearchGenome<'genome, 'blast> {
+    pub fn new(genome: &'genome Genome, permutations: &'seq SequencePermutations, blast_tables: &'blast Option<Vec<BlastHitsTable>>) 
+    -> SearchGenome<'genome, 'blast> {
         
         // If genome has gene annotation data available...
         let genes = match &genome.genes {
@@ -353,9 +363,9 @@ impl<'genome, 'blast, 'seq> SearchGenome<'genome, 'blast> {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-struct SearchGene<'genome> {
-    gene: &'genome Gene,
-    linear_location: LinearGenomeLocation<'genome>,
+pub struct SearchGene<'genome> {
+    pub gene: &'genome Gene,
+    pub linear_location: LinearGenomeLocation<'genome>,
     blast_association: Option<HashSet<genome::BlastAssociationType>>,
 }
 
@@ -368,10 +378,10 @@ struct SearchBlastFragment<'blast, 'genome> {
 
 // Operator Data Structre + Related Methods
 #[derive(Debug, Clone, PartialEq)]
-struct Operator<'genome> {
-    linear_location: LinearGenomeLocation<'genome>,
-    seq: String,
-    dimension: OperatorDimension,
+pub struct Operator<'genome> {
+    pub linear_location: LinearGenomeLocation<'genome>,
+    pub seq: String,
+    pub dimension: OperatorDimension,
 }
 
 impl<'genome> genome::GetSequence for Operator<'genome> {
@@ -383,7 +393,7 @@ impl<'genome> genome::GetSequence for Operator<'genome> {
 impl<'genome> genome::ReverseComplement for Operator<'genome> {}
 
 // Implement locate on LinearGenomeTraits for all searchable elements
-trait LocateOnLinearGenome {
+pub trait LocateOnLinearGenome {
     fn get_linear_location(&self) -> &LinearGenomeLocation;
 }
 
@@ -406,8 +416,8 @@ impl<'blast, 'genome> LocateOnLinearGenome for SearchBlastFragment<'blast, 'geno
 }
 
 // How object 'self' is related to a given origin; turns spatial relationship into a method call on objects
-trait Relationship: LocateOnLinearGenome {
-    fn relationship_with<T: LocateOnLinearGenome>(&self, origin: &T) -> SpatialRelationship {
+pub trait Relationship: LocateOnLinearGenome {
+    fn relative_to<T: LocateOnLinearGenome>(&self, origin: &T) -> SpatialRelationship {
         let origin = origin.get_linear_location();
         let target = &self.get_linear_location();
         spatial_relationship(origin, target)
@@ -725,7 +735,7 @@ fn blast_results_linker(genome: &mut SearchGenome) {
         for hit in blast_hits {
             
             // If a new match is found
-            if let SpatialRelationship::Overlap(_) = gene.relationship_with(hit) {
+            if let SpatialRelationship::Overlap(_) = gene.relative_to(hit) {
                 // If gene and blast hit are determined to overlap, either create a new storage vector
                 // for blast associations if one doesn't exist, or append new blast association to the
                 // existing list
@@ -745,17 +755,82 @@ fn blast_results_linker(genome: &mut SearchGenome) {
     }
 }
 
+impl Display for CircularGenomeLocation<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 
+        let x_hat = GenomeVector(1.0, 0.0);
+        let mut theta_1 = x_hat.angle(&self.start_unit_vec).to_degrees();
+        let mut theta_2 = x_hat.angle(&self.end_unit_vec).to_degrees();
+        let mut theta_3 = x_hat.angle(&self.center).to_degrees();
+        let orientation_1 = x_hat.cross(&self.start_unit_vec);
+        let orientation_2 = x_hat.cross(&self.end_unit_vec);
+        let orientation_3 = x_hat.cross(&self.center);
 
+        if orientation_1 < 0.0 {
+            theta_1 = 360.0 - theta_1;
+        }
 
+        if orientation_2 < 0.0 {
+            theta_2 = 360.0 - theta_2;
+        }
 
+        if orientation_3 < 0.0 {
+            theta_3 = 360.0 - theta_3;
+        }
+
+        write!(f, "Circular Location\nReplicon: {}\nStrand: {:.15}\nReplicon Size: {}bp\nArc Length: {:.6}bp\nStart:\t{:.15} (θ₁ = {:.5}°)\n\
+                   End:\t{:.15} (θ₂ = {:.5}°)\nCenter:\t{:.15} (θ₃ = {:.5}°)\n", 
+                   self.replicon.accession_id, self.strand, self.replicon.len, self.arc_length, self.start_unit_vec,
+                   theta_1, self.end_unit_vec, theta_2, self.center, theta_3)
+    }    
+}
+
+impl Display for StrandSense {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let txt = match self {
+            StrandSense::Forward => "Forward",
+            StrandSense::Reverse => "Reverse",
+            StrandSense::Other => "Other",
+        };
+        write!(f, "{}", txt)
+    }
+}
+
+impl Display for GenomeVector {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "<{}, {}>", self.0, self.1)
+    }
+}
+
+impl Display for LinearGenomeLocation<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let strand = &self.strand;
+        let parent_id = &self.replicon.accession_id;
+        let start = self.start_bound;
+        let end = self.end_bound;
+        let element_len = if end > start {
+            (end as i64 - start as i64).abs()
+        } else {
+            (self.replicon.len as i64) - (end as i64 - start as i64).abs()
+        };
+
+        write!(f, "Linear Location\nReplicon: {}\nStrand: {}\nStart Bound: {}\nEnd Bound: {}\nFeature Length: {}\n",
+                parent_id, strand, start, end, element_len)
+        }
+}
+
+impl<'genome> Display for Operator<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "5'-{}-3' \t{}\t {:?}", self.seq, self.linear_location.start_bound+1, self.dimension)
+    }
+}
 
 
 // UNIT TESTS
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cop_operon_specific::build_cop_permutation_table;
+    use crate::cop_specific_analysis::build_cop_permutation_table;
     use crate::permutations::SequencePermutations;
     use crate::genome::{self, GenomeRegion, FeatureType, BlastAssociationType};
     use crate::import::{self, AssemblyMetadata};
@@ -784,31 +859,6 @@ mod tests {
         assert!(delta_3 < 1e-8);
 
         assert!(test_cross_3 == -test_cross_4);
-    }
-
-    #[test]
-    fn test_genome_dot_cross_pdt() {
-        let vec_1 = GenomeVector(10.0, -PI);
-        let vec_2 = GenomeVector(E, -2.0*PI);
-        let vec_3 = GenomeVector(-13.69, -2.1);
-        let vec_4 = GenomeVector(0.0, 0.0);
-        let vec_5 = GenomeVector(1.0, 1.0);
-
-        let test_dot_1 = vec_1.dot(&vec_2);
-        let test_dot_2 = vec_2.dot(&vec_2);
-        let test_dot_3 = vec_2.dot(&vec_3);
-        let test_dot_4 = vec_3.dot(&vec_2);
-        let test_dot_5 = vec_4.dot(&vec_2);
-        let test_dot_6 = vec_3.dot(&vec_1);
-        let test_dot_7 = vec_5.dot(&vec_3);
-
-        let test_answers = [test_dot_1, test_dot_2, test_dot_3, test_dot_4, test_dot_5, test_dot_6, test_dot_7];
-        let expected_answers = [46.92202709, 46.8674737, -24.01858909, -24.01858909, 0.0, -130.3026554, -15.79];
-
-        for (left, right) in expected_answers.iter().zip(test_answers.iter()) {
-            let delta = (left - right).abs();
-            assert!(1e-6 > delta);
-        }
     }
 
     #[test]
@@ -1031,7 +1081,6 @@ mod tests {
     fn genome_vector_from_linear_bound_2() {
         const REPLICON_SIZE: usize = 7_231_001;
         const MAX_INDEX: usize = 7_231_001 * 4;
-        const VECTOR_LEN: usize = 23;
 
         // Generate all cartesian unit vectors for every bp boundary position in a small circular genome
         let test_cases = (0..=MAX_INDEX).map(|n| GenomeVector::new(n, REPLICON_SIZE));
@@ -1419,8 +1468,8 @@ mod tests {
         let genome_annotation_file = PathBuf::from("tests/test_assets/GCF_000006885.1_ASM688v1/GCF_000006885.1_ASM688v1_genomic.gff");
 
         // Import data relevant to TIGR4
-        let protogenome = import::parse_genome_sequence(&assembly_name, genome_seq_file);
-        let protogenes = import::parse_genome_annotation(genome_annotation_file);
+        let protogenome = import::parse_genome_sequence(&assembly_name, &genome_seq_file);
+        let protogenes = import::parse_genome_annotation(&genome_annotation_file);
 
         // Build TIGR4 genome
         let asm_pull_error = "ERROR: could not find assembly name in metadata database!";
@@ -1436,8 +1485,8 @@ mod tests {
         let genome_annotation_file = PathBuf::from("tests/test_assets/GCF_000006865.1_ASM686v1/GCF_000006865.1_ASM686v1_genomic.gff");
 
         // Import data relevant to lacto
-        let protogenome = import::parse_genome_sequence(&assembly_name, genome_seq_file);
-        let protogenes = import::parse_genome_annotation(genome_annotation_file);
+        let protogenome = import::parse_genome_sequence(&assembly_name, &genome_seq_file);
+        let protogenes = import::parse_genome_annotation(&genome_annotation_file);
 
         // Build lacto genome
         let asm_pull_error = "ERROR: could not find assembly name in metadata database!";
@@ -1515,7 +1564,7 @@ mod tests {
         
         // TIGR4
         let TIGR4 = imported_genomes.0;
-        let TIGR4_search = SearchGenome::new(&TIGR4, &operators, None);
+        let TIGR4_search = SearchGenome::new(&TIGR4, &operators, &None);
 
         // T4 PRINTING
         println!("\nTIGR4");
@@ -1602,7 +1651,7 @@ mod tests {
         // LACTO PRINTING
         println!("\nLACTO");
         let lacto = imported_genomes.1;
-        let lacto_search = SearchGenome::new(&lacto, &operators, None);
+        let lacto_search = SearchGenome::new(&lacto, &operators, &None);
         for (index, op) in lacto_search.operators.clone().unwrap().iter().enumerate() {
             println!("[{}]\t{:?}\t{}\t\t5'-{}-3'\t{}:{}", index+1, op.dimension, op.linear_location.strand, op.seq, op.linear_location.start_bound+1, op.linear_location.end_bound);
         }
@@ -2027,8 +2076,8 @@ mod tests {
         // Pull a list of elements from genome annotation both near target gene itself and near its antipode
         let mut global_element_list: Vec<SearchGene> = Vec::new();
 
-        let t4_test_genome = SearchGenome::new(&TIGR4, &operators, None);
-        let lacto_test_genome = SearchGenome::new(&LACTO, &operators, None);
+        let t4_test_genome = SearchGenome::new(&TIGR4, &operators, &None);
+        let lacto_test_genome = SearchGenome::new(&LACTO, &operators, &None);
 
         let local_start: usize = 2182;
         let local_end: usize= 2237;
@@ -2171,12 +2220,13 @@ mod tests {
         let (TIGR4, LACTO) = import_tigr4_lacto_genome(); 
 
         // Parse + search genomes
+        let BLAST = Some(BLAST_tables);
         let t4_now = SystemTime::now();
-        let TIGR4_search = SearchGenome::new(&TIGR4, &operators, Some(&BLAST_tables));
+        let TIGR4_search = SearchGenome::new(&TIGR4, &operators, &BLAST);
         println!("Build T4 search genome struct time: {}ms", t4_now.elapsed().unwrap().as_millis());
 
         let now = SystemTime::now();
-        let LACTO_search = SearchGenome::new(&LACTO, &operators, Some(&BLAST_tables));
+        let LACTO_search = SearchGenome::new(&LACTO, &operators, &BLAST);
         println!("Build LACTO search genome struct time: {}ms", now.elapsed().unwrap().as_millis()); 
 
         // T4 Genome Blast Hit Validation
@@ -2263,8 +2313,8 @@ mod tests {
         }
 
         // Parse genomes
-        let TIGR4_search = SearchGenome::new(&TIGR4, &operators, None);
-        let LACTO_search = SearchGenome::new(&LACTO, &operators, None);
+        let TIGR4_search = SearchGenome::new(&TIGR4, &operators, &None);
+        let LACTO_search = SearchGenome::new(&LACTO, &operators, &None);
 
         // Pull specific genes from genomes
         let mut target_genes = TIGR4_search.genes.as_ref()
@@ -2364,7 +2414,7 @@ mod tests {
         let operators = SequencePermutations::new("Cop Operator".to_string(), operator_seq, table);
 
         // Parse genomes
-        let TIGR4_search = SearchGenome::new(&TIGR4, &operators, None);
+        let TIGR4_search = SearchGenome::new(&TIGR4, &operators, &None);
         let T4_genome_objects = TIGR4_search.genes.as_ref()
                                                   .unwrap()
                                                   .iter()
@@ -2379,7 +2429,7 @@ mod tests {
                                          .map(|x| x.clone())
                                          .collect::<Vec<SearchGene>>();
 
-        let LACTO_search = SearchGenome::new(&LACTO, &operators, None);
+        let LACTO_search = SearchGenome::new(&LACTO, &operators, &None);
         let LACTO_genome_objects = LACTO_search.genes.as_ref()
                                                      .unwrap()
                                                      .iter()
@@ -2465,71 +2515,6 @@ mod tests {
             } else {
                 println!("Arc lengths differ by less than {}", DELTA)
             }
-        }
-    }
-
-    use std::fmt::Display;
-    impl Display for CircularGenomeLocation<'_> {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-
-            let x_hat = GenomeVector(1.0, 0.0);
-            let mut theta_1 = x_hat.angle(&self.start_unit_vec).to_degrees();
-            let mut theta_2 = x_hat.angle(&self.end_unit_vec).to_degrees();
-            let mut theta_3 = x_hat.angle(&self.center).to_degrees();
-            let orientation_1 = x_hat.cross(&self.start_unit_vec);
-            let orientation_2 = x_hat.cross(&self.end_unit_vec);
-            let orientation_3 = x_hat.cross(&self.center);
-
-            if orientation_1 < 0.0 {
-                theta_1 = 360.0 - theta_1;
-            }
-
-            if orientation_2 < 0.0 {
-                theta_2 = 360.0 - theta_2;
-            }
-
-            if orientation_3 < 0.0 {
-                theta_3 = 360.0 - theta_3;
-            }
-
-            write!(f, "Circular Location\nReplicon: {}\nStrand: {:.15}\nReplicon Size: {}bp\nArc Length: {:.6}bp\nStart:\t{:.15} (θ₁ = {:.5}°)\n\
-                       End:\t{:.15} (θ₂ = {:.5}°)\nCenter:\t{:.15} (θ₃ = {:.5}°)\n", 
-                       self.replicon.accession_id, self.strand, self.replicon.len, self.arc_length, self.start_unit_vec,
-                       theta_1, self.end_unit_vec, theta_2, self.center, theta_3)
-        }    
-    }
-
-    impl Display for LinearGenomeLocation<'_> {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            let strand = &self.strand;
-            let parent_id = &self.replicon.accession_id;
-            let start = self.start_bound;
-            let end = self.end_bound;
-            let element_len = if end > start {
-                (end as i64 - start as i64).abs()
-            } else {
-                (self.replicon.len as i64) - (end as i64 - start as i64).abs()
-            };
-
-            write!(f, "Linear Location\nReplicon: {}\nStrand: {}\nStart Bound: {}\nEnd Bound: {}\nFeature Length: {}\n",
-                    parent_id, strand, start, end, element_len)
-        }
-    }
-
-    impl Display for StrandSense {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            let txt = match self {
-                StrandSense::Forward => "Forward",
-                StrandSense::Reverse => "Reverse",
-                StrandSense::Other => "Other",
-            };
-            write!(f, "{}", txt)
-        }
-    }
-    
-    impl Display for GenomeVector {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            write!(f, "<{}, {}>", self.0, self.1)
         }
     }
 }

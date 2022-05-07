@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
@@ -20,7 +19,7 @@ pub struct ThreadPoolTask {
 }
 
 impl ThreadPoolTask {
-    fn new(task_id: usize, subroutine: Box<dyn FnOnce() + Send + 'static>) -> ThreadPoolTask {
+    pub fn new(task_id: usize, subroutine: Box<dyn FnOnce() + Send + 'static>) -> ThreadPoolTask {
         ThreadPoolTask { 
             task_id, 
             subroutine,
@@ -71,7 +70,7 @@ impl Manager {
         }
     }
 
-    fn close_threadpool(&self) {
+    pub fn close(&self) {
         for _ in 0..self.num_workers {
             self.sequential_lock_tx.send(DataSignal::Exit).expect("ERROR: could not send exit signal to threadpool!");
         }
@@ -114,7 +113,7 @@ impl Manager {
         }
 
         // Send signal to close threadpool after all tasks have been distributed
-        self.close_threadpool();
+        self.close();
     }
 }
 
@@ -214,20 +213,20 @@ mod test {
     #[should_panic]
     fn open_close_pool_1() {
         let test_threadpool = Manager::new(0);
-        test_threadpool.close_threadpool();
+        test_threadpool.close();
     }
 
     #[test]
     #[should_panic]
     fn open_close_pool_2() {
         let test_threadpool = Manager::new(314);
-        test_threadpool.close_threadpool();
+        test_threadpool.close();
     }
 
     #[test]
     fn open_close_pool_3() {
         let test_threadpool = Manager::new(24);
-        test_threadpool.close_threadpool();
+        test_threadpool.close();
     }
 
     #[test]
