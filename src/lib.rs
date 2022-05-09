@@ -40,16 +40,15 @@ pub mod cop_specific_analysis {
 
     // Build a closure for a worker thread to run
     pub fn build_genome_analysis_task(task_num: usize,
-                                      genome_dir: PathBuf, 
+                                      genome_dir: PathBuf,
                                       metadata: Arc<HashMap<String, AssemblyMetadata>>,
                                       consensus: Arc<SequencePermutations>,
                                       blast: Arc<Option<Vec<BlastHitsTable>>>) -> ThreadPoolTask {
         
         let task = move || {
             println!("[{}] {}", task_num, genome_dir.file_name().unwrap().to_str().unwrap());
-            let raw_genome = build_genome_from_dir(genome_dir, &metadata);
-            let processed_genome = search(&raw_genome, &consensus, &blast);
-            let operons = find_operons(&processed_genome);
+            let raw_genome = build_genome_from_dir(&genome_dir, &metadata);
+            let mut processed_genome = search(&raw_genome, &consensus, &blast);
         };
 
         ThreadPoolTask::new(task_num, Box::new(task))
@@ -78,7 +77,7 @@ pub mod cop_specific_analysis {
     }
 
     // Build paths to genome assembly directories from a root directory
-    pub fn build_list_of_genome_directories(genomes_root_dir: PathBuf) -> Vec<PathBuf> {
+    pub fn build_list_of_genome_directories(genomes_root_dir: &PathBuf) -> Vec<PathBuf> {
         let dir_files = fs::read_dir(genomes_root_dir).unwrap();
         dir_files.into_iter().map(|x| x.unwrap().path()).collect::<Vec<PathBuf>>()
     }

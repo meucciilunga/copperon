@@ -55,18 +55,17 @@ pub trait ReverseComplement: GetSequence {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum StrandSense {
     Forward,
     Reverse,
     Other,
 }
 
-#[derive(Debug, PartialEq, Clone)] 
+#[derive(Debug, PartialEq, Clone, Eq, Hash)] 
 pub enum RepliconType {
     Chromosome,
     Plasmid,
-    Other,
 }
 
 #[allow(non_camel_case_types)]
@@ -265,7 +264,7 @@ impl Gene {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Replicon {
     pub accession_id: String,
     pub replicon_type: RepliconType,

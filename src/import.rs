@@ -787,7 +787,7 @@ mod tests {
         let (metadata, _, _) = cop_specific_analysis::load_resources(refseq, genbank, Some(blast_data));
 
         // Build task list from list of genome assembly directories
-        let genome_dirs = cop_specific_analysis::build_list_of_genome_directories(path_to_database);
+        let genome_dirs = cop_specific_analysis::build_list_of_genome_directories(&path_to_database);
 
         for item in genome_dirs.iter() {
             let asm_name = item.file_name().and_then(|x| x.to_str()).map(|x| x.to_string()).unwrap();
