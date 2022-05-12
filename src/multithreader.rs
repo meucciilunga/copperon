@@ -14,15 +14,13 @@ enum WorkerSignal {
 }
 
 pub struct ThreadPoolTask {
-    task_id: usize,
     subroutine: Box<dyn FnOnce() + Send>,
 }
 
 impl ThreadPoolTask {
-    pub fn new(task_id: usize, subroutine: Box<dyn FnOnce() + Send + 'static>) -> ThreadPoolTask {
+    pub fn new(subroutine: Box<dyn FnOnce() + Send + 'static>) -> ThreadPoolTask {
         ThreadPoolTask { 
-            task_id, 
-            subroutine,
+            subroutine
         }
     }
 }
@@ -78,7 +76,7 @@ impl Manager {
         let mut closed_count = 0_usize;
         loop {
 
-            // Exit loop when all created worker threads have been CONFIRMED as closed
+            // Exit loop only when all created worker threads have been CONFIRMED as closed
             if closed_count == self.num_workers {
                 break
             }
@@ -243,7 +241,7 @@ mod test {
                 thread::sleep(x);
             };
             let new_subroutine = Box::new(new_subroutine);
-            let new_task = ThreadPoolTask::new(id_copy, new_subroutine);
+            let new_task = ThreadPoolTask::new(new_subroutine);
             task_list.push(new_task);
         }
 
@@ -267,7 +265,7 @@ mod test {
                 thread::sleep(x);
             };
             let new_subroutine = Box::new(new_subroutine);
-            let new_task = ThreadPoolTask::new(id_copy, new_subroutine);
+            let new_task = ThreadPoolTask::new(new_subroutine);
             task_list.push(new_task);
         }
 
@@ -291,7 +289,7 @@ mod test {
                 thread::sleep(x);
             };
             let new_subroutine = Box::new(new_subroutine);
-            let new_task = ThreadPoolTask::new(id_copy, new_subroutine);
+            let new_task = ThreadPoolTask::new(new_subroutine);
             task_list.push(new_task);
         }
 

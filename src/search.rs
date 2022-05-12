@@ -1,5 +1,5 @@
 use crate::genome::{self, Gene, Genome, GenomeRegion, StrandSense, BlastFragment,
-                    Replicon, BlastHitsTable, ReverseComplement, BlastAssociationType};
+                    Replicon, BlastHitsTable, BlastAssociationType};
 use crate::permutations::SequencePermutations;
 use std::f64::consts::PI;
 use std::ops::{Add, Sub};
@@ -17,7 +17,12 @@ impl SpatialRelationship {
     pub fn distance(&self) -> usize {
         match self {
             SpatialRelationship::Neighbor(x) => x.distance(),
-            _ => 0,
+            SpatialRelationship::Overlap(_) => 0,
+            SpatialRelationship::None => 0,
+            // No  meaningful way to assign distance b/w elements on different strands,
+            // and implementing return value of this function as Option<usize> may
+            // dramatically increase complexity of codebase; thus, made decision to
+            // interpret distance b/w elements on different replicons as 0.
         }
     }
 }
@@ -272,17 +277,18 @@ impl<'genome> CircularGenomeLocation<'genome> {
 
 // Implement light wrappers around elements from Genome module to facilitate easier implementation 
 // of LocateOnLinearGenome trait
-pub struct SearchGenome<'genome, 'blast> {
+pub struct SearchGenome<'genome, 'blast, 'query> {
     pub genome:     &'genome Genome,
     pub genes:      Option<Vec<SearchGene<'genome>>>,
     pub fragments:  Option<Vec<SearchBlastFragment<'blast, 'genome>>>,
     pub operators:  Option<Vec<Operator<'genome>>>,
     pub operons:    Option<Vec<Operon<'genome>>>,
+    pub operator_query: Option<&'query SequencePermutations>,
 }
 
-impl<'genome, 'blast, 'seq> SearchGenome<'genome, 'blast> {
-    pub fn new(genome: &'genome Genome, permutations: &'seq SequencePermutations, blast_tables: &'blast Option<Vec<BlastHitsTable>>) 
-    -> SearchGenome<'genome, 'blast> {
+impl<'genome, 'blast, 'query> SearchGenome<'genome, 'blast, 'query> {
+    pub fn new(genome: &'genome Genome, permutations: &'query SequencePermutations, blast_tables: &'blast Option<Vec<BlastHitsTable>>) 
+    -> SearchGenome<'genome, 'blast, 'query> {
         
         // If genome has gene annotation data available...
         let genes = match &genome.genes {
@@ -364,6 +370,7 @@ impl<'genome, 'blast, 'seq> SearchGenome<'genome, 'blast> {
             fragments,
             operators: None,
             operons: None,
+            operator_query: Some(permutations),
         };
 
         // Link BLAST results to genes
@@ -414,6 +421,7 @@ impl<'genome> genome::ReverseComplement for Operator<'genome> {}
 pub struct Operon<'genome> {
     pub genes: Vec<SearchGene<'genome>>,
     pub linear_location: LinearGenomeLocation<'genome>,
+    pub operators: Option<Vec<Operator<'genome>>>,
 }
 
 impl<'genome> Operon<'genome> {
@@ -464,29 +472,30 @@ impl<'genome> Operon<'genome> {
         let output = Operon {
             genes: operon_genes,
             linear_location,
+            operators: None,
         };
 
         return Some(output)
     }
 
-    pub fn parents<'blast>(&self, parent_genome: &SearchGenome<'genome,'blast>) -> Option<Vec<Operator>> {
+    pub fn parents<'blast, 'query>(&mut self, parent_genome: &SearchGenome<'genome, 'blast, 'query>) {
 
-        const VALID_OPERATOR_DISTANCE_FROM_OPERON: usize = 100;
+        const VALID_OPERATOR_DISTANCE_FROM_OPERON: usize = 200;
 
         let genome_operators = match &parent_genome.operators {
             Some(x) => x,
-            None => return None,
+            None => return,
         };
 
         let potential_operators = match find_nearby_operators(self, genome_operators, VALID_OPERATOR_DISTANCE_FROM_OPERON) {
             Some(x) => x,
-            None => return None,
+            None => return,
         };
 
         // If operon has definitive strandedness, then only take operators that could
         // reasonably function as a regulator of that operon given its orientation;
         // otherwise, just return the full list of of nearby operators
-        match self.linear_location.strand {
+        let operators = match self.linear_location.strand {
 
             StrandSense::Forward | StrandSense::Reverse => {
                 let mut storage: Vec<Operator> = Vec::new();
@@ -509,7 +518,7 @@ impl<'genome> Operon<'genome> {
             StrandSense::Other => {
                 Some(potential_operators)
             }
-        }
+        };
     }
 }
 
@@ -557,7 +566,7 @@ impl<'genome> Relationship for Operon<'genome> {}
 
 // Given a genome and all the sequence permutations of an (operator) consensus sequence,
 // locate all places in the genome where some variant of the consensus sequence is found.
-fn find_genome_operators<'genome>(target_genome: &mut SearchGenome<'genome, '_>, query: &SequencePermutations) {
+fn find_genome_operators<'genome>(target_genome: &mut SearchGenome<'genome, '_, '_>, query: &SequencePermutations) {
 
     // Define chunk length based on size of first element in sequence permutation list
     let chunk_len: usize = query.sequences[0].len();
@@ -609,7 +618,7 @@ fn find_genome_operators<'genome>(target_genome: &mut SearchGenome<'genome, '_>,
         }
     }
 
-    fn process_proto_operator_data<'genome>(finds: Vec<(String, (usize, usize))>, direction: StrandSense, parent_genome: &SearchGenome<'genome, '_>, parent_replicon: &Replicon) -> Vec<Operator<'genome>> {
+    fn process_proto_operator_data<'genome>(finds: Vec<(String, (usize, usize))>, direction: StrandSense, parent_genome: &SearchGenome<'genome, '_, '_>, parent_replicon: &Replicon) -> Vec<Operator<'genome>> {
 
         let mut storage: Vec<Operator> = Vec::new();
 
@@ -952,6 +961,7 @@ impl<'genome> Display for Operator<'_> {
             Some(x) => x.genes.len(),
         };
 
+        let replicon_type = &self.linear_location.replicon.replicon_type;
         
         let assoc_types = [
                         (BlastAssociationType::CopA, 'A'),
@@ -977,9 +987,10 @@ impl<'genome> Display for Operator<'_> {
         
         match self.linear_location.strand {
             StrandSense::Forward | StrandSense::Other => {
-                write!(f, "5'-{}-3' \t{}\t{}\t {} \t {} \t {} \t {} \t {} \t {}", self.seq, 
+                write!(f, "5'-{}-3'\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}", self.seq, 
                                                                             self.linear_location.replicon.accession_id, 
                                                                             self.linear_location.start_bound+1, 
+                                                                            replicon_type,
                                                                             self.operator_class,
                                                                             self.operator_type,
                                                                             assoc_code,
@@ -988,15 +999,16 @@ impl<'genome> Display for Operator<'_> {
                                                                             operon_len)
             },
             StrandSense::Reverse => {
-                write!(f, "3'-{}-5' \t{}\t{}\t {} \t {} \t {} \t {} \t {} \t {}", self.seq.chars().rev().collect::<String>(), 
-                                                                            self.linear_location.replicon.accession_id, 
-                                                                            self.linear_location.start_bound+1, 
-                                                                            self.operator_class,
-                                                                            self.operator_type,
-                                                                            assoc_code,
-                                                                            self.dimension,
-                                                                            self.linear_location.strand,
-                                                                            operon_len)
+                write!(f, "3'-{}-5'\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}", self.seq.chars().rev().collect::<String>(), 
+                                                                                self.linear_location.replicon.accession_id, 
+                                                                                self.linear_location.start_bound+1, 
+                                                                                replicon_type,
+                                                                                self.operator_class,
+                                                                                self.operator_type,
+                                                                                assoc_code,
+                                                                                self.dimension,
+                                                                                self.linear_location.strand,
+                                                                                operon_len)
             },
         }
 
@@ -1777,8 +1789,8 @@ mod tests {
     fn test_operator_search() {
 
         // CopY Operators
-        let (operator_seq, table) = build_cop_permutation_table();
-        let operators = SequencePermutations::new("Cop Operator".to_string(), operator_seq, table);
+        let (consensus_operator_seq, table) = build_cop_permutation_table();
+        let operators = SequencePermutations::new(consensus_operator_seq, table);
         let imported_genomes = import_tigr4_lacto_genome();
         
         // TIGR4
@@ -2254,8 +2266,8 @@ mod tests {
         }
 
         // CopY Operators
-        let (operator_seq, table) = build_cop_permutation_table();
-        let operators = SequencePermutations::new("Cop Operator".to_string(), operator_seq, table);
+        let (consensus_operator_seq, table) = build_cop_permutation_table();
+        let operators = SequencePermutations::new(consensus_operator_seq, table);
 
         // Import Genomes
         let (TIGR4, LACTO) = import_tigr4_lacto_genome();
@@ -2439,8 +2451,8 @@ mod tests {
 
         // CopY Operators
         let now = SystemTime::now();
-        let (operator_seq, table) = build_cop_permutation_table();
-        let operators = SequencePermutations::new("Cop Operator".to_string(), operator_seq, table);
+        let (consensus_operator_seq, table) = build_cop_permutation_table();
+        let operators = SequencePermutations::new(consensus_operator_seq, table);
         println!("Operator calculation time: {}ms", now.elapsed().unwrap().as_millis());
 
         // Import Genomes -- runtime-values are measured in the helper function itself
@@ -2494,8 +2506,8 @@ mod tests {
     fn test_search_bubble_generator() {
 
         // CopY Operators
-        let (operator_seq, table) = build_cop_permutation_table();
-        let operators = SequencePermutations::new("Cop Operator".to_string(), operator_seq, table);
+        let (consensus_operator_seq, table) = build_cop_permutation_table();
+        let operators = SequencePermutations::new(consensus_operator_seq, table);
 
         // Import Genomes -- runtime-values are measured in the helper function itself
         let (TIGR4, LACTO) = import_tigr4_lacto_genome(); 
@@ -2637,8 +2649,8 @@ mod tests {
         let (TIGR4, LACTO) = import_tigr4_lacto_genome(); 
 
         // CopY Operators
-        let (operator_seq, table) = build_cop_permutation_table();
-        let operators = SequencePermutations::new("Cop Operator".to_string(), operator_seq, table);
+        let (consensus_operator_seq, table) = build_cop_permutation_table();
+        let operators = SequencePermutations::new(consensus_operator_seq, table);
 
         // Parse genomes
         let TIGR4_search = SearchGenome::new(&TIGR4, &operators, &None);

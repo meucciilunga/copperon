@@ -70,38 +70,35 @@ fn full_seq_permutator(sequence: String, remapping_table: HashMap<char, Vec<char
     }
 }
 
+#[derive(PartialEq, Debug)]
 pub struct SequencePermutations {
-    pub name: String,
-    pub sequences: Vec<String>
+    pub consensus_seq: String,
+    pub sequences: Vec<String>,
+    pub expectation: f64,
 }
 
 impl SequencePermutations {
-    pub fn new(name: String, sequence: String, remapping_table: HashMap<char, Vec<char>>) -> SequencePermutations {
-        let sequences = full_seq_permutator(sequence, remapping_table);
+    pub fn new(consensus_seq: String, remapping_table: HashMap<char, Vec<char>>) -> SequencePermutations {
 
+        // Initial Length of consensus sequence
+        let consensus_len = consensus_seq.len();
+        let input_seq = consensus_seq.clone();
+
+        // Build set of permutations from consensus sequence
+        let sequences = full_seq_permutator(consensus_seq, remapping_table);
+
+        // Calucate Expectation Value under assumption of random sampling, equal probability
+        let num_of_random_seq_of_consensus_len = 4_usize.pow(consensus_len as u32);
+        let num_of_consensus_seq = sequences.len();
+        let expectation = (num_of_consensus_seq as f64) / (num_of_random_seq_of_consensus_len as f64);
+        
         SequencePermutations { 
-            name,
-            sequences, 
+            consensus_seq: input_seq,
+            sequences,
+            expectation,
         }
     }
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 // UNIT TESTS
 #[cfg(test)]
@@ -134,9 +131,9 @@ mod test {
             Vec::from(permutations)
         };
 
-        let actual_result = next_site_permutator(&test_seq, &permutation_table);
+        let test_result = next_site_permutator(&test_seq, &permutation_table);
 
-        assert_eq!(actual_result.unwrap(), expected_result);
+        assert_eq!(test_result.unwrap(), expected_result);
     }
 
     #[test]
@@ -160,9 +157,9 @@ mod test {
             Vec::from(permutations)
         };
 
-        let actual_result = next_site_permutator(&test_seq, &permutation_table);
+        let test_result = next_site_permutator(&test_seq, &permutation_table);
 
-        assert_eq!(actual_result.unwrap(), expected_result);
+        assert_eq!(test_result.unwrap(), expected_result);
     }
 
     #[test]
@@ -185,9 +182,9 @@ mod test {
             Vec::from(permutations)
         };
 
-        let actual_result = next_site_permutator(&test_seq, &permutation_table);
+        let test_result = next_site_permutator(&test_seq, &permutation_table);
 
-        assert_eq!(actual_result.unwrap(), expected_result);
+        assert_eq!(test_result.unwrap(), expected_result);
     }
 
     #[test]
@@ -201,11 +198,11 @@ mod test {
             tmp_table
         };
 
-        let actual_result = next_site_permutator(&test_seq, &permutation_table);
+        let test_result = next_site_permutator(&test_seq, &permutation_table);
 
         // Since there is no avaialble position to be substituted in the test_seq, the next_site function
         // should return an Option::None--which will panic when unwrapped!
-        actual_result.unwrap();
+        test_result.unwrap();
     }
 
     #[test]
@@ -235,16 +232,16 @@ mod test {
             set_of_permutations
         };
 
-        let actual_result: HashSet<String> = full_seq_permutator(test_seq, permutation_table).into_iter().collect();
+        let test_result: HashSet<String> = full_seq_permutator(test_seq, permutation_table).into_iter().collect();
 
-        assert_eq!(actual_result, expected_result);
+        assert_eq!(test_result, expected_result);
     }
 
     #[test]
     fn full_permutator_test_2() {
 
         // Expected
-        let expected_result = {
+        let expected_sequences = {
             let permutation_list_path = PathBuf::from("tests/test_assets/RNYKACANNYGTMRNY_permutations.txt");
             let err_msg = "ERROR: could not open file containing pre-generated list of CopY permutations!";
             let mut file = File::open(permutation_list_path).expect(err_msg);
@@ -257,11 +254,42 @@ mod test {
             set_of_permutations
         };
 
-        // Actual
+        // Test
         let (test_seq, permutation_table) = cop_specific_analysis::build_cop_permutation_table();
-        let actual_result: HashSet<String> = full_seq_permutator(test_seq, permutation_table).into_iter().collect();
+        let test_sequences: HashSet<String> = full_seq_permutator(test_seq, permutation_table).into_iter().collect();
 
-        assert_eq!(actual_result, expected_result);
+        assert_eq!(test_sequences, expected_sequences);
+    }
+
+    #[test]
+    fn full_permutator_test_3() {
+
+        // Expected
+        let expected_sequences = {
+            let permutation_list_path = PathBuf::from("tests/test_assets/RNYKACANNYGTMRNY_permutations.txt");
+            let err_msg = "ERROR: could not open file containing pre-generated list of CopY permutations!";
+            let mut file = File::open(permutation_list_path).expect(err_msg);
+            let mut contents = String::new();
+
+            file.read_to_string(&mut contents).expect("ERROR: could not pull data from file!");
+            let permutations = contents.split('\n');
+            
+            let set_of_permutations: Vec<String> = permutations.map(|x| x.to_string()).collect();
+            set_of_permutations
+        };
+
+        let expected_result = SequencePermutations {
+            consensus_seq: "RNYKACANNYGTMRNY".to_string(),
+            sequences: expected_sequences,
+            expectation: 32_768.0 / 4_294_967_296.0,
+        };
+
+        // Test
+        let (test_seq, permutation_table) = cop_specific_analysis::build_cop_permutation_table();
+        let test_result = SequencePermutations::new(test_seq, permutation_table);
+        println!("EXPECTATION VALUE OF TEST CALCULATION: {}", test_result.expectation);
+
+        assert_eq!(test_result, expected_result);
     }
 
 }

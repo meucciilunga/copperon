@@ -290,8 +290,8 @@ pub struct Genome {
 
 impl Genome {
     pub fn from_proto(input_data: ProtoGenome, 
-                  input_metadata: &AssemblyMetadata,
-                  genes: Option<Vec<Gene>>) -> Genome {
+                      input_metadata: &AssemblyMetadata,
+                      genes: Option<Vec<Gene>>) -> Genome {
         
         // Storage Logistics
         let mut replicons: HashMap<String, Replicon> = HashMap::with_capacity(2 * input_data.proto_replicons.len());
@@ -299,15 +299,14 @@ impl Genome {
         // Convert ProtoReplicons into Replicons by combining initial replicon strands with their RevComps into a struct
         for proto_replicon_strand in input_data.proto_replicons {
 
-            // Build replicon elements
-            let replicon_type = match proto_replicon_strand.proto_replicon_type {
+            let replicon_type = match &proto_replicon_strand.proto_replicon_type {
                 ProtoRepliconType::Chromosome => RepliconType::Chromosome,
                 ProtoRepliconType::Plasmid => RepliconType::Plasmid,
             };
+
             let fwd_strand = proto_replicon_strand.replicon_sequence.clone();
             let rev_strand = proto_replicon_strand.reverse_complement();
             let len = fwd_strand.len();
-
             let new_replicon = Replicon {
                 accession_id: proto_replicon_strand.replicon_accession.clone(),
                 replicon_type,

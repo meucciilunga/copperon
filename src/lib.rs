@@ -6,9 +6,12 @@ mod analysis;
 mod logging;
 pub mod multithreader;
 
+
 pub mod cop_specific_analysis {
-    use std::{collections::HashMap, sync::Arc, path::PathBuf};
+    use std::io::{Write, BufWriter};
+    use std::{collections::HashMap, sync::Arc, sync::Mutex, path::PathBuf};
     use crate::genome::BlastAssociationType;
+    use crate::logging::SummaryLog;
     use crate::{analysis::*, import::AssemblyMetadata, permutations::SequencePermutations, genome::BlastHitsTable};
     use crate::multithreader::ThreadPoolTask;
     use std::fs;
@@ -43,15 +46,25 @@ pub mod cop_specific_analysis {
                                       genome_dir: PathBuf,
                                       metadata: Arc<HashMap<String, AssemblyMetadata>>,
                                       consensus: Arc<SequencePermutations>,
-                                      blast: Arc<Option<Vec<BlastHitsTable>>>) -> ThreadPoolTask {
+                                      blast: Arc<Option<Vec<BlastHitsTable>>>,
+                                      genomes_summary_file: Arc<Mutex<BufWriter<fs::File>>>,
+                                      orphans_file: Arc<Mutex<BufWriter<fs::File>>>,
+                                      operators_file: Arc<Mutex<BufWriter<fs::File>>>,
+                                      operons_file: Arc<Mutex<BufWriter<fs::File>>>
+                                      ) -> ThreadPoolTask {
         
         let task = move || {
             println!("[{}] {}", task_num, genome_dir.file_name().unwrap().to_str().unwrap());
             let raw_genome = build_genome_from_dir(&genome_dir, &metadata);
-            let mut processed_genome = search(&raw_genome, &consensus, &blast);
+            let processed_genome = search(&raw_genome, &consensus, &blast);
+            
+            processed_genome.log_table_entry(&genomes_summary_file);
+            processed_genome.log_orphans(&orphans_file);
+            processed_genome.log_operator_summaries(&operators_file);
+            processed_genome.log_operon_summaries(&operons_file)
         };
 
-        ThreadPoolTask::new(task_num, Box::new(task))
+        ThreadPoolTask::new(Box::new(task))
     }
 
     // Build paths to BLAST results data from a root directory
@@ -80,5 +93,18 @@ pub mod cop_specific_analysis {
     pub fn build_list_of_genome_directories(genomes_root_dir: &PathBuf) -> Vec<PathBuf> {
         let dir_files = fs::read_dir(genomes_root_dir).unwrap();
         dir_files.into_iter().map(|x| x.unwrap().path()).collect::<Vec<PathBuf>>()
+    }
+
+    // Build a shared log file for storing analysis summary data derived from multiple threads
+    pub fn generate_shared_logging_file(log_file_path: &PathBuf) -> Arc<Mutex<BufWriter<fs::File>>> {
+
+        let file = fs::OpenOptions::new().append(true)
+                                         .create_new(true)
+                                         .open(log_file_path)
+                                         .expect("ERROR: could not create shared log file!");
+        let buffered_file = BufWriter::new(file);
+        let guarded_file = Mutex::new(buffered_file);
+        
+        Arc::new(guarded_file)
     }
 }

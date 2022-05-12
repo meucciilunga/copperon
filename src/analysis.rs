@@ -7,7 +7,7 @@ use crate::genome::{self, BlastHitsTable, StrandSense, BlastAssociationType};
 use crate::import::{self, AssemblyMetadata};
 use crate::permutations::{self, SequencePermutations};
 use crate::search::{self, Operator, NeighborType, OverlapType, Relationship,
-                    SearchGene, SearchGenome, SpatialRelationship, Operon, 
+                    SearchGene, SearchGenome, SpatialRelationship, Operon, OperatorType,
                     LinearGenomeLocation, LocateOnLinearGenome, CircularGenomeLocation};
 use crate::cop_specific_analysis;
 
@@ -46,8 +46,8 @@ pub fn prepare_common_resources(refseq: PathBuf, genbank: PathBuf, path_to_blast
     let blast = Arc::new(blast_tables);
 
     // Load CopY Operators
-    let (operator_seq, table) = cop_specific_analysis::build_cop_permutation_table();
-    let operators = permutations::SequencePermutations::new("CopY-family Consensus Operator".to_string(), operator_seq, table);
+    let (consensus_operator_seq, table) = cop_specific_analysis::build_cop_permutation_table();
+    let operators = permutations::SequencePermutations::new(consensus_operator_seq, table);
     let operators = Arc::new(operators);
 
     (metadata, blast, operators)
@@ -113,9 +113,9 @@ pub fn build_genome_from_dir(dir: &PathBuf, database_metadata: &HashMap<String, 
     genome::Genome::from_proto(protogenome, metadata, genes)
 }
 
-pub fn search<'genome, 'blast>(target:    &'genome genome::Genome, 
-                               consensus: &SequencePermutations, 
-                               tables:    &'blast Option<Vec<BlastHitsTable>>) -> search::SearchGenome<'genome, 'blast> {
+pub fn search<'genome, 'blast, 'query>( target:    &'genome genome::Genome, 
+                                        consensus: &'query SequencePermutations, 
+                                        tables:    &'blast Option<Vec<BlastHitsTable>>) -> search::SearchGenome<'genome, 'blast, 'query> {
 
     // Searches for operator sequences
     let mut output = search::SearchGenome::new(target, consensus, tables);
@@ -145,10 +145,12 @@ fn predict_operon<'genome, 'blast>(input: &Operator<'genome>, input_genes: &Opti
 
     // Ensure each feature region has only one representative annotation (i.e., if a pseudogene and CDS represent
     // the same genome region in the annotation table, only one of them should be included in the neighbors list)
-    let mut unique_neighbors: HashMap<(usize, usize), SearchGene> = HashMap::with_capacity(neighbors.len());
+    let mut unique_neighbors: HashMap<(usize, usize, String), SearchGene> = HashMap::with_capacity(neighbors.len());
     for neighbor in neighbors.into_iter() {
-        let indicies = (neighbor.linear_location.start_bound, neighbor.linear_location.end_bound);
-        unique_neighbors.insert(indicies, neighbor);
+        let loc = (neighbor.linear_location.start_bound, 
+                   neighbor.linear_location.end_bound, 
+                   neighbor.linear_location.replicon.accession_id.clone());
+        unique_neighbors.insert(loc, neighbor);
     }
     let mut neighbors = unique_neighbors.into_values().collect::<Vec<SearchGene>>();
 
@@ -364,11 +366,14 @@ fn predict_operon<'genome, 'blast>(input: &Operator<'genome>, input_genes: &Opti
         storage_vec.append(&mut three_prime_genes);
     }
     
-    // Similar to code above; removes duplicates via hashmapping against sequence indicies
-    let mut unique_operon_elements: HashMap<(usize, usize), SearchGene> = HashMap::with_capacity(storage_vec.len());
+    // Similar to code above; removes duplicates via hashmapping against sequence location
+    let mut unique_operon_elements: HashMap<(usize, usize, String), SearchGene> = HashMap::with_capacity(storage_vec.len());
     for neighbor in storage_vec.into_iter() {
-        let indicies = (neighbor.linear_location.start_bound, neighbor.linear_location.end_bound);
-        unique_operon_elements.insert(indicies, neighbor);
+        let loc = (neighbor.linear_location.start_bound, 
+                   neighbor.linear_location.end_bound,
+                   neighbor.linear_location.replicon.accession_id.clone()
+                );
+        unique_operon_elements.insert(loc, neighbor);
     }
     let regulated_genes = unique_operon_elements.into_values().collect::<Vec<SearchGene>>();
 
@@ -380,7 +385,7 @@ fn predict_operon<'genome, 'blast>(input: &Operator<'genome>, input_genes: &Opti
     }
 }
 
-impl<'genome, 'blast> SearchGenome<'genome, 'blast> {
+impl<'genome, 'blast, 'query> SearchGenome<'genome, 'blast, 'query> {
     
     // After linking every operator to its operon, this function will
     // use that data to determine the OperatorType and OperatorClass
@@ -573,7 +578,7 @@ impl<'genome, 'blast> SearchGenome<'genome, 'blast> {
         // Remove duplicates by hashing operon against its linear_genome_location; two operons
         // sharing the exact same linear genome location will only be counted once
         let mut tmp: HashMap<LinearGenomeLocation, Operon> = HashMap::with_capacity(storage.len());
-        for operon in storage {
+        for mut operon in storage {
             tmp.insert(operon.linear_location.clone(), operon);
         } 
 
@@ -593,63 +598,9 @@ impl<'genome, 'blast> SearchGenome<'genome, 'blast> {
         self.update_operator_class_and_type();
     }
 
-    // Calculate total amount of space in a genome lies b/w genes
-    fn total_intergenic_space(&self) -> Option<usize> {
-        
-        let genes = match &self.genes {
-            Some(x) => x,
-            None => return None,
-        };
-
-        // Filter off gene annotations (which are generally duplicates of CDS) plus the start region
-        let gene_region_filter = |x: &SearchGene| -> bool {
-            (x.gene.feature_type != genome::FeatureType::Region) && 
-            (x.gene.feature_type != genome::FeatureType::Gene) &&
-            (x.gene.feature_type != genome::FeatureType::Pseudogene)
-        };
-
-        // NOTE: NEED TO FACTOR IN REPLICONS -> THIS FUNCTION SHOULD CALCULATE FOR FEATURES ON THE SAME REPLICON
-        let genes = genes.into_iter()
-                         .filter(|x| gene_region_filter(x))
-                         .cloned()
-                         .collect::<Vec<SearchGene>>();
-
-        // Ensure each feature region has only one representative annotation (i.e., if a pseudogene and CDS represent
-        // the same genome region in the annotation table, only one of them should be included in the neighbors list)
-        let mut unique_features: HashMap<(usize, usize), SearchGene> = HashMap::with_capacity(genes.len());
-        for feature in genes.into_iter() {
-            let indicies = (feature.linear_location.start_bound, feature.linear_location.end_bound);
-            unique_features.insert(indicies, feature);
-        }
-        let mut genes = unique_features.into_values().collect::<Vec<SearchGene>>();
-
-        // Sort list of remaining genome features by start bound index
-        let start_bound_sort = |a: &SearchGene, b: &SearchGene| {
-            let a_start = a.linear_location.start_bound;
-            let b_start = b.linear_location.start_bound;
-            a_start.cmp(&b_start)
-        };
-        genes.sort_by(start_bound_sort);
-
-        let mut total_space = 0_usize;
-        for (left, right) in genes.iter().zip(genes[1..].iter()) {
-            total_space += left.relative_to(right).distance();
-        }
-
-        let est_gene = genes.iter().fold(0.0, |acc, x| acc + search::CircularGenomeLocation::new(x.get_linear_location()).arc_length);
-
-        println!("Total integenic space: {}", total_space);
-        println!("Estimated genic space: {}", est_gene);
-        println!("TOTAL: {}", total_space as f64 + est_gene);
-        println!("Integenic Space Fraction: {}", (total_space as f64) / 2_160_842.0);
-        println!("Genic Space Fraction: {}", est_gene / 2_160_842.0);
-
-        unimplemented!()
-    }
-
     // Search genome for every protein that has an association with CopY, but no parent operator
     #[allow(non_snake_case)]
-    fn CopY_orphans(&self) -> Option<Vec<SearchGene>> {
+    pub fn CopY_orphans(&self) -> Option<Vec<SearchGene>> {
         
         let CopY_genes = match self.list_all_CopY() {
             None => return None,
@@ -729,7 +680,7 @@ impl<'genome, 'blast> SearchGenome<'genome, 'blast> {
         fn wash(mut input: Vec<SearchGene>) -> Vec<SearchGene> {
 
             // Storage logistics
-            let mut washer: HashMap<(usize, usize), SearchGene> = HashMap::new();
+            let mut washer: HashMap<(usize, usize, String), SearchGene> = HashMap::new();
             
             // Filter off 'Gene' feature annotations (which are generally duplicates 
             // of the more useful CDS feature) plus the start genome region annotations
@@ -746,7 +697,8 @@ impl<'genome, 'blast> SearchGenome<'genome, 'blast> {
             for gene in input {
                 let start = gene.linear_location.start_bound;
                 let end = gene.linear_location.end_bound;
-                let key = (start, end);
+                let replicon = gene.linear_location.replicon.accession_id.clone();
+                let key = (start, end, replicon);
                 washer.insert(key, gene);
             }
 
@@ -774,6 +726,118 @@ impl<'genome, 'blast> SearchGenome<'genome, 'blast> {
             _ => Some(CopY_genes),
         }
     }
+
+    pub fn blast_associations(&self) -> Option<HashSet<BlastAssociationType>> {
+        
+        let genes = match &self.genes {
+            Some(x) => x.clone(),
+            None => return None
+        };
+
+        let mut storage: HashSet<BlastAssociationType> = HashSet::new();
+        
+        for gene in genes.iter() {
+            let assoc = match &gene.blast_association {
+                None => continue,
+                Some(x) => x,
+            };
+
+            storage = storage.union(&assoc).cloned().collect();
+        }
+
+        match storage.len() {
+            0 => None,
+            _ => Some(storage)
+        }
+    }
+
+    // Calculate total amount of space in a genome that lies b/w genes
+    pub fn total_intergenic_space(&self) -> Option<(usize, usize, usize)> {
+    
+        let genes = match &self.genes {
+            Some(x) => x,
+            None => return None,
+        };
+
+        // Filter off gene annotations (which are generally duplicates of CDS) plus the start region
+        let gene_region_filter = |x: &SearchGene| -> bool {
+            (x.gene.feature_type != genome::FeatureType::Region) && 
+            (x.gene.feature_type != genome::FeatureType::Gene) &&
+            (x.gene.feature_type != genome::FeatureType::Pseudogene)
+        };
+
+        let all_genes = genes.into_iter()
+                             .filter(|x| gene_region_filter(x))
+                             .cloned()
+                             .collect::<Vec<SearchGene>>();
+
+        // Ensure each feature region has only one representative annotation (i.e., if a pseudogene and CDS represent
+        // the same genome region in the annotation table, only one of them should be included in the neighbors list)
+        let mut unique_features: HashMap<(usize, usize, String), SearchGene> = HashMap::with_capacity(all_genes.len());
+        for feature in all_genes.into_iter() {
+            let loc = (feature.linear_location.start_bound, 
+                       feature.linear_location.end_bound,
+                       feature.linear_location.replicon.accession_id.clone());
+            unique_features.insert(loc, feature);
+        }
+        let all_relevant_unique_genes = unique_features.into_values().collect::<Vec<SearchGene>>();
+
+        // Sort all genes into seperate vectors based on the replicon they're derived from
+        let mut genes_by_replicon: Vec<(String, Vec<SearchGene>)> = Vec::new();
+        for replicon_id in self.genome.replicons.keys() {
+            let replicon_genes = all_relevant_unique_genes.iter()
+                                                          .filter(|&x| x.gene.location.replicon_accession.eq(replicon_id))
+                                                          .cloned()
+                                                          .collect::<Vec<SearchGene>>();
+
+            let tmp = (replicon_id.clone(), replicon_genes);
+            genes_by_replicon.push(tmp);
+        }
+
+        // Sum up total amount of inter/intra-genic space for each replicon
+        let mut net_gap_length = 0_usize;
+        let mut net_genes_length_upper_bound = 0_usize;
+        let mut total_relevant_genome_len = 0_usize;
+
+        for (id, mut replicon_genes) in genes_by_replicon.into_iter() {
+
+            // For some reason or another, certain replicons can have no genes associated with them,
+            // so don't factor these replicons into the spatial calculations when encountered
+            if replicon_genes.len() == 0 {
+                continue;
+            }
+
+            // Sort list of remaining replicon features by start bound index
+            let start_bound_sort = |a: &SearchGene, b: &SearchGene| {
+                let a_start = a.linear_location.start_bound;
+                let b_start = b.linear_location.start_bound;
+                a_start.cmp(&b_start)
+            };
+            replicon_genes.sort_by(start_bound_sort);
+
+            // Calculate space between n and n+1 replicon features for all n-1 features
+            for (left, right) in replicon_genes.iter().zip(replicon_genes[1..].iter()) {
+                net_gap_length += left.relative_to(right).distance();
+            }
+
+            // Calculate maximum possible length of intragenic space across genome;
+            // maximum bound b/c calculation assumes genes cannot overlap
+            let coding_length = replicon_genes.iter()
+                                              .fold(0.0, |acc, x| acc + search::CircularGenomeLocation::new(x.get_linear_location()).arc_length);
+            net_genes_length_upper_bound += coding_length.round() as usize;
+
+            // Calculate total genome length for replicons considered
+            total_relevant_genome_len += self.genome.replicons.get(&id).unwrap().fwd_strand.len();
+        }
+        
+        // Calculate total length of genome across all replicons CONSIDERED FOR THE INTEGENIC ANALYSIS
+        let output = (net_gap_length, net_genes_length_upper_bound, total_relevant_genome_len);
+
+        match net_gap_length {
+            0 => None,
+            _ => Some(output)
+        }
+    }
 }
 
 
@@ -789,8 +853,8 @@ mod tests {
         // Import and search T4 Genome
         let refseq = PathBuf::from("tests/test_assets/assembly_summary_refseq.txt");
         let genbank = PathBuf::from("tests/test_assets/assembly_summary_genbank.txt");
-        //let target_dir = PathBuf::from("tests/test_assets/GCF_000006885.1_ASM688v1");
-        let target_dir = PathBuf::from("tests/test_assets/GCF_016127235.1_ASM1612723v1");
+        let target_dir = PathBuf::from("tests/test_assets/GCF_000006885.1_ASM688v1");
+        //let target_dir = PathBuf::from("tests/test_assets/GCF_016127235.1_ASM1612723v1");
         let blast_data = Some(cop_specific_analysis::build_list_of_blast_result_files("blast/results"));
         let (metadata, blast, consensus) = prepare_common_resources(refseq, genbank, blast_data);
         let genome = build_genome_from_dir(&target_dir, &metadata);
@@ -822,12 +886,15 @@ mod tests {
                         println!("{}", gene.linear_location);
                     }
 
-                    if let Some(x) = &operon.parents(&search) {
-                        for operator in x {
-                            println!("{}", operator)
+                    match &operon.operators {
+                        Some(x) => {
+                            for operator in x {
+                                println!("{}", operator.linear_location);
+                            }
                         }
+                        None => continue,
                     }
-                    println!();
+
                 }
             },
             None => {}
@@ -841,13 +908,13 @@ mod tests {
         // Import and search T4 Genome
         let refseq = PathBuf::from("tests/test_assets/assembly_summary_refseq.txt");
         let genbank = PathBuf::from("tests/test_assets/assembly_summary_genbank.txt");
-        let t4_dir = PathBuf::from("tests/test_assets/GCF_000006885.1_ASM688v1");
+        let genome_dir = PathBuf::from("tests/test_assets/GCA_000008885.1_ASM888v1");
         let blast_data = Some(cop_specific_analysis::build_list_of_blast_result_files("blast/results"));
         let (metadata, blast, consensus) = prepare_common_resources(refseq, genbank, blast_data);
-        let t4_genome = build_genome_from_dir(&t4_dir, &metadata);
-        let t4_search = search(&t4_genome, &consensus, &blast);
+        let genome = build_genome_from_dir(&genome_dir, &metadata);
+        let search = search(&genome, &consensus, &blast);
 
-        t4_search.total_intergenic_space();
+        search.total_intergenic_space();
     }
 
     #[test]
